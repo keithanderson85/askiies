@@ -1487,11 +1487,54 @@
   if (OPT.camd == null) OPT.camd = 1;
   LISTS.camd = () => ['CLOSE', 'NORMAL', 'FAR', 'WIDE'];
   const CAMD = [1, 1.35, 1.7, 2.1];
+  // CAMERA HORIZON = LEVEL: a horizon-locked chase camera, the way War Thunder's mouse-aim camera
+  // behaves: the camera rig's "up" is always the world's up, it follows your heading and climb
+  // (smoothed), and the jet rolls, loops and flies inverted inside a view that never tilts.
+  // Camera pitch is capped at ~72 deg so it never flips; over the top of a loop it swings round
+  // to the new heading smoothly instead. ENGAGE target framing still works on top of it.
+  if (OPT.camh == null) OPT.camh = 1;
+  LISTS.camh = () => ['ROLLS WITH JET', 'LEVEL'];
+  const HZ = { init: 0, yaw: 0, pitch: 0, d: new THREE.Vector3(), fw: new THREE.Vector3(), rt: new THREE.Vector3(), up: new THREE.Vector3(), a: new THREE.Vector3(), b: new THREE.Vector3(), Y: new THREE.Vector3(0, 1, 0) };
+  const hzOn = () => (OPT.camh | 0) === 1 && st === 1 && P && !P.dead && !P.gone && OPT.view !== 1
+    && !(typeof VEHM !== 'undefined' && VEHM) && !(typeof CIN !== 'undefined' && CIN);
+  function hzStep(dt) {
+    const f = P.f;
+    if (!HZ.init || !(dt > 0) || dt > .5) { HZ.d.copy(f); HZ.yaw = Math.atan2(f.x, f.z); HZ.pitch = Math.max(-1.25, Math.min(1.25, Math.asin(Math.max(-1, Math.min(1, f.y))))); HZ.init = 1; }
+    HZ.d.lerp(f, 1 - Math.exp(-5 * dt)).normalize();
+    const h = Math.hypot(HZ.d.x, HZ.d.z);
+    const pT = Math.max(-1.25, Math.min(1.25, Math.atan2(HZ.d.y, h)));       // cap ~72 deg
+    if (h > .12) {                                                             // near vertical: hold heading
+      let dy = Math.atan2(HZ.d.x, HZ.d.z) - HZ.yaw;
+      while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
+      HZ.yaw += Math.sign(dy) * Math.min(Math.abs(dy), (1.5 + 2 * Math.abs(dy)) * dt);   // smooth swing over the top
+    }
+    HZ.pitch += (pT - HZ.pitch) * Math.min(1, dt * 8);
+    const cp = Math.cos(HZ.pitch);
+    HZ.fw.set(Math.sin(HZ.yaw) * cp, Math.sin(HZ.pitch), Math.cos(HZ.yaw) * cp);
+    HZ.rt.crossVectors(HZ.fw, HZ.Y).normalize();
+    HZ.up.crossVectors(HZ.rt, HZ.fw).normalize();
+  }
   if (typeof camSpring === 'function' && typeof CAMF !== 'undefined') {
     const _cs = camSpring;
     camSpring = function (x, v, goal, dt, w) {   // eslint-disable-line no-global-assign
-      // only the flight chase camera's position spring (its velocity vector is CAMF.cv)
-      if (v === CAMF.cv && goal && st !== 3 && !(typeof VEHM !== 'undefined' && VEHM)) {
+      const flight = goal && st !== 3 && !(typeof VEHM !== 'undefined' && VEHM);
+      const lvl = flight && (v === CAMF.cv || v === CAMF.lv) && hzOn();
+      if (!lvl && v === CAMF.cv) HZ.init = 0;
+      if (lvl) {
+        const CK = window.CAMK || 1, ps = P.psm || 0;
+        if (v === CAMF.cv) {
+          hzStep(dt);
+          // keep whatever ENGAGE added on top of the plain chase offset, swap the rolling chase for the level one
+          HZ.a.set(0, (7 + ps * 5) * CK, (32 + ps * 20) * CK).applyQuaternion(cq);
+          goal.sub(HZ.a).addScaledVector(HZ.fw, -(32 + ps * 20) * CK).addScaledVector(HZ.up, (7 + ps * 5) * CK);
+          try { cu.copy(HZ.Y); } catch (e) {}                                  // camera up = world up
+        } else {
+          HZ.b.set(0, 5, -80).applyQuaternion(cq);
+          goal.sub(HZ.b).addScaledVector(HZ.fw, 80).addScaledVector(HZ.up, 5);
+        }
+      }
+      // CAMERA DISTANCE: only the flight chase camera's position spring (its velocity vector is CAMF.cv)
+      if (v === CAMF.cv && flight) {
         const f = CAMD[OPT.camd | 0] || 1;
         if (f !== 1) goal.multiplyScalar(f);
       }
@@ -1521,6 +1564,11 @@
           d: 'How far behind your jet the chase camera sits. CLOSE is the original tight view; NORMAL, FAR and WIDE pull back for a less crowded screen. Works with both CAMERA modes.'
         },
         {
+          l: 'CAMERA HORIZON',
+          k: 'camh',
+          d: 'LEVEL: the chase camera stays level with the horizon (like War Thunder\'s mouse-aim camera) while your jet rolls, loops and flies inverted. ROLLS WITH JET: the original camera that banks with the aircraft.'
+        },
+        {
           l: 'MOUSE CONTROL',
           k: 'mctrl',
           d: 'OFF: keep current controls. MOUSE AIM: steer by pointing the mouse cursor (LMB guns, Wheel throttle, MMB/X missile, RMB lock). VIRTUAL STICK: mouse acts as analog stick.'
@@ -1532,7 +1580,7 @@
   }
 
   window.ASKIIES_PLANES = {
-    version: '1.4.0',
+    version: '1.5.0',
     setMode: m => { OPT.pmode = m | 0; syncModeUniforms(); save(); },
     getMode: () => OPT.pmode | 0,
     setMouseMode: m => { OPT.mctrl = m | 0; save(); },
