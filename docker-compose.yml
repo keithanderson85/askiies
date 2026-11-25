@@ -1,0 +1,22 @@
+services:
+  askiies:
+    build: .
+    container_name: askiies
+    ports:
+      - "5210:80"
+    restart: unless-stopped
+
+  # Multiplayer rooms + accounts + cloud saves. Not published on a host port:
+  # players reach it through the askiies nginx at /mp/.
+  askiies-mp:
+    build: ./mp-server
+    container_name: askiies-mp
+    environment:
+      # New pilots need this code to create an account. Set it in .env next to this file.
+      INVITE_CODE: ${ASKIIES_INVITE_CODE:-}
+    volumes:
+      - askiies-mp-data:/data
+    restart: unless-stopped
+
+volumes:
+  askiies-mp-data:

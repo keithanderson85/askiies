@@ -1,0 +1,10 @@
+{
+  "name": "askiies-mp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ASKIIES multiplayer lobby/battle rooms + cloud saves (emulates the claude.ai room/db/user services)",
+  "main": "server.js",
+  "scripts": { "start": "node server.js" },
+  "engines": { "node": ">=22.13" },
+  "dependencies": { "ws": "8.18.0" }
+}

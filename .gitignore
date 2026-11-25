@@ -1,0 +1,9 @@
+# secrets: the invite code lives here
+.env
+# local tooling / runtime data
+node_modules/
+mp-server/node_modules/
+*.db
+*.db-wal
+*.db-shm
+*.log
