@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.2.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.3.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -211,10 +211,11 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.2.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
+  window.ASKIIES_MP = { version: '1.3.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
 
   // ================================================================== UI
-  // Sign-in overlay, the left ONLINE / FRIENDS drawer, invite prompts, display callsign sync.
+  // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
+  // and the native ONLINE / FRIENDS / pilot / ACCOUNT & SAVES pages in the hangar menu.
   function G(f) { try { return f(); } catch (e) { return undefined; } }
   const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
   function el(h) { const d = document.createElement('div'); d.innerHTML = h; return d.firstElementChild; }
@@ -227,64 +228,28 @@
   function setLobby(o) { try { lobbySet(o); } catch (e) {} }
 
   const CSS = `
-  #amp-ov{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.62);
-    font:14px/1.4 ui-monospace,Consolas,monospace;color:#bdf5d0;padding:16px;box-sizing:border-box}
-  #amp-ov .bx{width:100%;max-width:360px;background:#06110d;border:1px solid #2d6;box-shadow:0 0 24px rgba(40,220,110,.18);padding:18px}
-  #amp-ov h2{margin:0 0 4px;font-size:16px;letter-spacing:.14em;color:#5f9}
-  #amp-ov p{margin:0 0 12px;font-size:12px;color:#8bb}
-  #amp-ov label{display:block;font-size:11px;letter-spacing:.1em;color:#7c9;margin:10px 0 4px}
-  #amp-ov input{width:100%;box-sizing:border-box;background:#020806;border:1px solid #275;color:#dfe;padding:9px;font:inherit;font-size:16px;text-transform:none}
-  #amp-ov input:focus{outline:none;border-color:#5f9}
-  #amp-ov .row{display:flex;gap:8px;margin-top:16px;flex-wrap:wrap}
-  #amp-ov button{flex:1;min-width:120px;padding:10px;font:inherit;font-size:13px;letter-spacing:.1em;cursor:pointer;background:#0d2b1d;color:#bfffd5;border:1px solid #2d6}
-  #amp-ov button.alt{background:transparent;color:#8bb;border-color:#355}
+  #amp-ov{position:fixed;inset:0;z-index:99999;display:flex;align-items:flex-start;justify-content:center;background:rgba(0,8,6,.72);
+    padding:max(6vh,env(safe-area-inset-top)) 12px 12px;box-sizing:border-box;font-family:"Share Tech Mono",ui-monospace,monospace;color:#f2fff8}
+  #amp-ov .bx{width:min(520px,88vw);background:rgba(4,22,20,.96);border:1px solid #74ffb8;box-shadow:0 0 24px rgba(116,255,184,.25);padding:14px 16px 12px;box-sizing:border-box}
+  #amp-ov h2{margin:0 0 6px;color:#74ffb8;font-size:13px;letter-spacing:2px;font-weight:normal}
+  #amp-ov p{margin:0 0 8px;font-size:11px;color:rgba(242,255,248,.55)}
+  #amp-ov label{display:block;font-size:11px;letter-spacing:2px;color:#74ffb8;margin:10px 0 4px}
+  #amp-ov label span{color:rgba(242,255,248,.45);letter-spacing:0}
+  #amp-ov input{width:100%;box-sizing:border-box;background:#02100d;color:#f2fff8;border:1px solid rgba(116,255,184,.6);font:inherit;font-size:18px;padding:8px;outline:none;letter-spacing:1px}
+  #amp-ov input:focus{border-color:#74ffb8}
+  #amp-ov .row{display:flex;gap:10px;margin-top:12px;justify-content:flex-end;flex-wrap:wrap}
+  #amp-ov button{font:inherit;font-size:14px;padding:8px 22px;cursor:pointer;background:#2f9f5a;color:#fff;border:1px solid #74ffb8}
+  #amp-ov button.alt{background:#122a2a;color:#cfe;border:1px solid rgba(116,255,184,.35);padding:8px 16px}
   #amp-ov button:disabled{opacity:.5;cursor:wait}
-  #amp-ov .err{color:#ff8a7a;font-size:12px;min-height:16px;margin-top:10px}
-  #amp-ov .sw{font-size:12px;color:#7c9;margin-top:12px;text-align:center}#amp-ov .sw a{color:#5f9;cursor:pointer;text-decoration:underline}
-
-  #amp-hdl{position:fixed;left:0;top:50%;transform:translateY(-50%);z-index:99996;writing-mode:vertical-rl;transform-origin:center;
-    font:11px/1 ui-monospace,Consolas,monospace;letter-spacing:.16em;padding:12px 6px;cursor:pointer;user-select:none;
-    background:rgba(5,14,11,.9);border:1px solid #2d6;border-left:0;color:#8fe9b0;box-shadow:0 0 14px rgba(40,220,110,.15)}
-  #amp-hdl.off{border-color:#a83;color:#e9c08f}#amp-hdl:hover{background:rgba(12,36,26,.96)}
-  #amp-hdl b{color:#fff;font-weight:600}
-  #amp-side{position:fixed;left:0;top:8px;bottom:8px;z-index:99997;width:320px;max-width:88vw;display:flex;flex-direction:column;box-sizing:border-box;
-    background:rgba(4,11,9,.965);border:1px solid #2d6;border-left:0;box-shadow:0 0 30px rgba(0,0,0,.6),0 0 18px rgba(40,220,110,.12);
-    font:12px/1.35 ui-monospace,Consolas,monospace;color:#cfe}
-  #amp-side .hd{display:flex;align-items:center;justify-content:space-between;padding:11px 12px 8px;letter-spacing:.16em;color:#5f9;font-size:13px}
-  #amp-side .hd .x{cursor:pointer;color:#8bb;padding:2px 6px;letter-spacing:0;border:1px solid #355}
-  #amp-side .tabs{display:flex;border-bottom:1px solid #1f4a35;padding:0 8px}
-  #amp-side .tab{flex:1;text-align:center;padding:8px 4px;cursor:pointer;letter-spacing:.12em;color:#7a9;border-bottom:2px solid transparent;font-size:11.5px}
-  #amp-side .tab.on{color:#eef;border-bottom-color:#5f9}
-  #amp-side .add{display:flex;gap:6px;padding:9px 10px;border-bottom:1px solid rgba(80,160,120,.15)}
-  #amp-side .add input{flex:1;min-width:0;background:#020806;border:1px solid #275;color:#eef;padding:6px 7px;font:inherit;font-size:13px}
-  #amp-side .add input:focus{outline:none;border-color:#5f9}
-  #amp-side .amsg{padding:0 10px;font-size:10.5px;min-height:0;color:#ffb36a}
-  #amp-side .body{flex:1;overflow:auto;min-height:60px}
-  #amp-side .sec{padding:9px 12px 3px;font-size:10px;letter-spacing:.16em;color:#6a9}
-  #amp-side .r{display:flex;align-items:center;gap:6px;padding:7px 10px 7px 12px;border-bottom:1px solid rgba(80,160,120,.08)}
-  #amp-side .r .dot{width:7px;height:7px;border-radius:50%;background:#3d5;flex:none;box-shadow:0 0 6px #3d5}
-  #amp-side .r .dot.bt{background:#ffa64d;box-shadow:0 0 6px #ffa64d}#amp-side .r .dot.q{background:#ffd36a;box-shadow:0 0 6px #ffd36a}
-  #amp-side .r .dot.off{background:#3a4a44;box-shadow:none}
-  #amp-side .r .n{flex:1;min-width:0}
-  #amp-side .r .n b{display:block;color:#eef;font-weight:600;letter-spacing:.05em;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #amp-side .r .n i{display:block;font-style:normal;font-size:10.5px;color:#8ab;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-  #amp-side .r .n i.bt{color:#ffb36a}#amp-side .r .n i.q{color:#ffd36a}#amp-side .r .n i.off{color:#5a6f68}
-  #amp-side button{font:inherit;font-size:10.5px;letter-spacing:.1em;cursor:pointer;background:#0d2b1d;color:#bfffd5;border:1px solid #2d6;padding:5px 8px;flex:none}
-  #amp-side button:hover{background:#174a31}#amp-side button.alt{background:transparent;color:#8bb;border-color:#355}
-  #amp-side button.ic{padding:5px 7px}
-  #amp-side .pend{font-size:10px;color:#ffd36a;flex:none}
-  #amp-side .em{padding:14px 12px;color:#8ab;font-size:11.5px}
-  #amp-side .mode{display:block;width:calc(100% - 24px);margin:8px 12px 0;text-align:left;padding:9px 10px}
-  #amp-side .mode small{display:block;color:#8ab;letter-spacing:0;font-size:10.5px;margin-top:2px}
-  #amp-side .ft{border-top:1px solid #1f4a35;padding:8px 12px;color:#8ab;font-size:11px;display:flex;flex-direction:column;gap:6px}
-  #amp-side .ft .l{display:flex;justify-content:space-between;align-items:center;gap:6px}
-  #amp-side .ft a{color:#5f9;cursor:pointer;text-decoration:underline}
-  #amp-side .ft input{flex:1;min-width:0;background:#020806;border:1px solid #2d6;color:#eef;padding:5px;font:inherit;font-size:13px}
-  #amp-iv{position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:99999;width:380px;max-width:calc(100vw - 20px);box-sizing:border-box;
-    background:rgba(5,16,12,.97);border:1px solid #5f9;box-shadow:0 0 30px rgba(60,255,140,.25);padding:12px 14px;font:13px/1.35 ui-monospace,Consolas,monospace;color:#dfe}
-  #amp-iv b{color:#7dffa8;letter-spacing:.08em}#amp-iv p{margin:4px 0 10px;color:#9bc;font-size:11.5px}
-  #amp-iv .row{display:flex;gap:8px}#amp-iv button{flex:1;font:inherit;font-size:12px;letter-spacing:.1em;cursor:pointer;padding:9px;background:#0d2b1d;color:#bfffd5;border:1px solid #2d6}
-  #amp-iv button.alt{background:transparent;color:#9bb;border-color:#355}#amp-iv .bar{height:2px;background:#5f9;margin-top:10px;transition:width .3s linear}`;
+  #amp-ov .err{color:#ff8a7a;font-size:12px;min-height:15px;margin-top:8px}
+  #amp-ov .sw{font-size:11px;color:rgba(242,255,248,.55);margin-top:10px}#amp-ov .sw a{color:#74ffb8;cursor:pointer;text-decoration:underline}
+  #amp-iv{position:fixed;left:50%;top:max(14px,env(safe-area-inset-top));transform:translateX(-50%);z-index:99999;width:min(520px,88vw);box-sizing:border-box;
+    background:rgba(4,22,20,.96);border:1px solid #74ffb8;box-shadow:0 0 24px rgba(116,255,184,.25);padding:12px 16px 10px;font-family:"Share Tech Mono",ui-monospace,monospace;color:#f2fff8}
+  #amp-iv b{color:#74ffb8;font-size:13px;letter-spacing:2px;font-weight:normal}#amp-iv p{margin:6px 0 10px;color:rgba(242,255,248,.6);font-size:11px}
+  #amp-iv .row{display:flex;gap:10px;justify-content:flex-end}
+  #amp-iv button{font:inherit;font-size:14px;padding:8px 22px;cursor:pointer;background:#2f9f5a;color:#fff;border:1px solid #74ffb8}
+  #amp-iv button.alt{background:#122a2a;color:#cfe;border:1px solid rgba(116,255,184,.35);padding:8px 16px}
+  #amp-iv .bar{height:2px;background:#74ffb8;margin-top:10px;transition:width .3s linear}`;
   function addCss() { if (!document.getElementById('amp-css')) { const s = document.createElement('style'); s.id = 'amp-css'; s.textContent = CSS; document.head.appendChild(s); } }
 
   // ------------------------------------------------------------------ sign-in overlay
@@ -296,14 +261,14 @@
     if (document.pointerLockElement) try { document.exitPointerLock(); } catch (e) {}
     const reg = mode === 'register';
     ov = el(`<div id="amp-ov"><form class="bx" autocomplete="on">
-      <h2>${reg ? 'NEW PILOT' : 'ASKIIES ONLINE'}</h2>
+      <h2>${reg ? 'CREATE A PILOT' : 'SIGN IN'}</h2>
       <p>${note || (reg ? 'Create your pilot. You need the invite code from whoever runs this server.' : 'Sign in to fly with friends and keep your jets, missiles and campaign in the cloud.')}</p>
       <label>LOGIN CALLSIGN</label><input name="cs" maxlength="14" autocomplete="username" autocapitalize="characters" spellcheck="false" required>
       <label>PASSWORD</label><input name="pw" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required>
       ${reg ? '<label>DISPLAY CALLSIGN <span style="color:#577">(what others see · optional, change any time)</span></label><input name="disp" maxlength="14" autocomplete="nickname" spellcheck="false">' : ''}
       ${reg ? '<label>INVITE CODE</label><input name="inv" autocomplete="off" spellcheck="false" required>' : ''}
       <div class="err"></div>
-      <div class="row"><button type="submit">${reg ? 'CREATE PILOT' : 'SIGN IN'}</button><button type="button" class="alt" data-k="off">PLAY OFFLINE</button></div>
+      <div class="row"><button type="button" class="alt" data-k="off">PLAY OFFLINE</button><button type="submit">${reg ? 'CREATE PILOT' : 'SIGN IN'}</button></div>
       <div class="sw">${reg ? 'Already a pilot? <a data-k="login">Sign in</a>' : 'New here? <a data-k="reg">Create a pilot</a>'}</div>
     </form></div>`);
     shield(ov);
@@ -372,16 +337,15 @@
     FR.busy = 1;
     try { const r = await call('friends'); FR.list = r.friends || []; FR.addedMe = r.addedMe || []; FR.ids = new Set(FR.list.map(f => f.id)); FR.t = Date.now(); }
     catch (e) {} finally { FR.busy = 0; }
-    side.render();
   }
   async function frAdd(q) {
-    try { await call('friends/add', q); side.flash(''); toast('FRIEND ADDED'); await frLoad(); return true; }
-    catch (e) { side.flash(String(e.message || 'could not add').toUpperCase()); return false; }
+    try { await call('friends/add', q); toast('FRIEND ADDED'); await frLoad(); NAV.cache = {}; return true; }
+    catch (e) { toast(String(e.message || 'could not add').toUpperCase(), '#ff7a6a'); return false; }
   }
   async function frRemove(id, name) {
     if (!confirm('Remove ' + name + ' from your friends?')) return;
     try { await call('friends/remove', { id }); } catch (e) {}
-    await frLoad();
+    await frLoad(); NAV.cache = {};
   }
 
   // ------------------------------------------------------------------ invites (game's lobby presence + its own match launcher)
@@ -403,7 +367,6 @@
   }
   function launch(m) {
     try {
-      side.close(true);
       if (G(() => CA.on)) { try { caLeave(); } catch (e) {} }
       if (G(() => MM)) { try { MM = null; } catch (e) {} setLobby({ mm: null }); }   // eslint-disable-line no-global-assign
       const s = G(() => st);
@@ -419,7 +382,7 @@
     INV.out = { id, to: them.peer, cs: them.cs, k, m, t: Date.now() };
     setLobby({ inv: { id, to: them.peer, k, cs: m.roster[0].cs, m } });
     toast('INVITE SENT TO ' + them.cs + ' · ' + MODES[k].name);
-    side.pick = null; side.render();
+    NAV.cache = {};
   }
   function answer(peer, v, ok) {
     closeBanner();
@@ -436,11 +399,11 @@
         INV.out = null; setLobby({ inv: null });
         if (r.ok) { toast(o.cs + ' ACCEPTED · ' + MODES[o.k].name); setTimeout(() => launch(o.m), 2300); }
         else toast(o.cs + ' DECLINED', '#ffd36a');
-        side.render();
+        NAV.cache = {};
       } else if (!p || Date.now() - o.t > 30000) {
         INV.out = null; setLobby({ inv: null });
         toast(p ? o.cs + ' DID NOT ANSWER' : o.cs + ' WENT OFFLINE', '#ffd36a');
-        side.render();
+        NAV.cache = {};
       }
     }
     const mine = myPeer();
@@ -472,7 +435,7 @@
     const fr = FR.ids.has((net.meta.get(peer) || {}).uid);
     const elb = el(`<div id="amp-iv"><b>★ ${fr ? 'YOUR FRIEND ' : ''}${esc(String(v.cs || 'A PILOT').slice(0, 14))} INVITES YOU</b>
       <p>${esc(MODES[v.k].name)} · ${esc(MODES[v.k].d)}</p>
-      <div class="row"><button data-a="y">ACCEPT (Y)</button><button class="alt" data-a="n">DECLINE (N)</button></div><div class="bar"></div></div>`);
+      <div class="row"><button class="alt" data-a="n">DECLINE (N)</button><button data-a="y">ACCEPT (Y)</button></div><div class="bar"></div></div>`);
     shield(elb);
     const t0 = Date.now(), bar = elb.querySelector('.bar');
     const key = e => {
@@ -498,7 +461,7 @@
     me.display = d; csSynced = d;
     try { OPT.cs = d; save(); } catch (e) {}
     call('profile', { display: d }).then(() => toast('CALLSIGN SAVED · ' + d)).catch(() => toast('COULD NOT SAVE CALLSIGN', '#ff7a6a'));
-    side.render();
+    NAV.cache = {};
   }
   setInterval(() => {
     if (!me) return;
@@ -511,154 +474,203 @@
     if (cur !== csSynced) setDisplay(cur);
   }, 1000);
 
-  // ------------------------------------------------------------------ the left drawer: ONLINE | FRIENDS
-  const SS = { get: k => { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set: (k, v) => { try { sessionStorage.setItem(k, v); } catch (e) {} } };
-  const side = {
-    el: null, hdl: null, isOpen: false, tab: SS.get('amp-tab') || 'online', pick: null, edit: 0, auto: false, lastH: '',
-    build() {
-      if (this.el || !document.body) return;
-      addCss();
-      this.hdl = el('<div id="amp-hdl"></div>'); shield(this.hdl);
-      this.hdl.addEventListener('click', () => { if (me) this.open(); else showLogin(); });
-      this.el = el(`<div id="amp-side" style="display:none">
-        <div class="hd"><span>ASKIIES ONLINE</span><span class="x" data-a="close" title="Collapse">◂</span></div>
-        <div class="tabs"><div class="tab" data-t="online"></div><div class="tab" data-t="friends"></div></div>
-        <form class="add" autocomplete="off"><input name="q" maxlength="14" placeholder="Add friend by callsign" spellcheck="false"><button>ADD</button></form>
-        <div class="amsg"></div>
-        <div class="body"></div>
-        <div class="ft"></div></div>`);
-      shield(this.el);
-      this.el.addEventListener('click', e => this.click(e));
-      this.el.querySelector('.add').addEventListener('submit', async e => {
-        e.preventDefault();
-        const i = e.target.q, v = i.value.trim(); if (!v) return;
-        if (await frAdd({ callsign: v })) i.value = '';
-      });
-      this.el.addEventListener('keydown', e => {
-        if (e.target.name === 'dn') { if (e.key === 'Enter') { setDisplay(e.target.value); this.edit = 0; this.render(); } else if (e.key === 'Escape') { this.edit = 0; this.render(); } }
-      });
-      document.body.appendChild(this.hdl); document.body.appendChild(this.el);
-    },
-    open(pickPeer, tab) {
-      this.build(); this.isOpen = true; SS.set('amp-side', 'open');
-      if (tab) this.tab = tab;
-      this.pick = pickPeer || null;
-      if (Date.now() - FR.t > 10000) frLoad();
-      this.lastH = ''; this.render(); uiChanged();
-    },
-    close(silent) {
-      this.isOpen = false; this.pick = null; this.edit = 0;
-      if (!silent) SS.set('amp-side', 'closed');
-      uiChanged();
-    },
-    toggle() { this.isOpen ? this.close() : this.open(); },
-    flash(t) { if (this.el) this.el.querySelector('.amsg').textContent = t; },
-    click(e) {
-      const tb = e.target.closest('[data-t]');
-      if (tb) { this.tab = tb.getAttribute('data-t'); SS.set('amp-tab', this.tab); this.pick = null; this.flash(''); if (this.tab === 'friends') frLoad(); this.render(); return; }
-      const a = e.target.closest('[data-a]'); if (!a) return;
-      const act = a.getAttribute('data-a'), id = a.getAttribute('data-id'), peer = a.getAttribute('data-p');
-      if (act === 'close') this.close();
-      else if (act === 'out') signOut();
-      else if (act === 'inv') { this.pick = peer; this.render(); }
-      else if (act === 'back') { this.pick = null; this.render(); }
-      else if (act === 'mode') {
-        const t = pilots().find(o => o.peer === this.pick);
-        if (t) sendInvite(t, a.getAttribute('data-k')); else { toast('THAT PILOT WENT OFFLINE', '#ffd36a'); this.pick = null; this.render(); }
-      }
-      else if (act === 'fadd') frAdd({ id });
-      else if (act === 'frem') frRemove(id, a.getAttribute('data-n') || 'this pilot');
-      else if (act === 'ed') { this.edit = 1; this.render(); setTimeout(() => { const i = this.el.querySelector('input[name=dn]'); if (i) { i.focus(); i.select(); } }, 20); }
-      else if (act === 'edx') { this.edit = 0; this.render(); }
-      else if (act === 'eds') { const i = this.el.querySelector('input[name=dn]'); setDisplay(i ? i.value : ''); this.edit = 0; this.render(); }
-    },
-    row(o, extra) {
-      const d = doing(o.l), pend = INV.out && INV.out.to === o.peer, fr = o.uid && FR.ids.has(o.uid);
-      const btns = (pend ? '<span class="pend">INVITED…</span>' : `<button data-a="inv" data-p="${esc(o.peer)}">INVITE</button>`)
-        + (extra !== 'friends' && o.uid && !fr ? `<button class="alt ic" data-a="fadd" data-id="${esc(o.uid)}" title="Add friend">+</button>` : '');
-      return `<div class="r"><span class="dot ${d.c}"></span><div class="n"><b>${fr && extra !== 'friends' ? '★ ' : ''}${esc(o.cs)}</b><i class="${d.c}">${esc(d.t)}</i></div>${btns}</div>`;
-    },
-    render() {
-      if (!this.el) return;
-      // handle (collapsed state)
-      const L = me ? pilots() : [];
-      const onF = L.filter(o => o.uid && FR.ids.has(o.uid)).length;
-      this.hdl.className = me && uiState === 'online' ? '' : 'off';
-      this.hdl.innerHTML = !me ? '▸ SIGN IN · ONLINE' : uiState !== 'online' ? '▸ RECONNECTING…'
-        : `▸ ONLINE <b>${L.length}</b> · FRIENDS <b>${onF}</b>`;
-      if (!this.isOpen) return;
-      if (this.edit && this.el.contains(document.activeElement) && document.activeElement.name === 'dn') return;
-      const T = this.el.querySelectorAll('.tab');
-      T[0].className = 'tab' + (this.tab === 'online' ? ' on' : ''); T[0].textContent = 'ONLINE · ' + L.length;
-      T[1].className = 'tab' + (this.tab === 'friends' ? ' on' : ''); T[1].textContent = 'FRIENDS · ' + onF + '/' + FR.list.length;
-      this.el.querySelector('.add').style.display = this.tab === 'friends' && !this.pick ? '' : 'none';
-      let h = '';
-      const t = this.pick && L.find(o => o.peer === this.pick);
-      if (this.pick && !t) this.pick = null;
-      if (t) {
-        h += `<div class="em">Invite <b style="color:#eef">${esc(t.cs)}</b> to:${t.l && t.l.st === 'battle' ? '<br><span style="color:#ffb36a">They are in a battle right now; accepting takes them out of it.</span>' : ''}</div>`;
-        for (const k of ['d1', 'air', 'sq']) h += `<button class="mode" data-a="mode" data-k="${k}">${MODES[k].name}<small>${MODES[k].d}</small></button>`;
-        h += `<div style="padding:10px 12px"><button class="alt" data-a="back">‹ BACK</button></div>`;
-      } else if (uiState !== 'online') {
-        h += `<div class="em">${uiState === 'down' ? 'Reconnecting to the server…' : 'Connecting…'}</div>`;
-      } else if (this.tab === 'online') {
-        if (!L.length) h += '<div class="em">Nobody else is online right now. Pilots show up here the moment they open the game and sign in.</div>';
-        for (const o of L) h += this.row(o, 'online');
-      } else {
-        const live = new Map(L.filter(o => o.uid).map(o => [o.uid, o]));
-        const on = FR.list.filter(f => live.has(f.id)), off = FR.list.filter(f => !live.has(f.id));
-        if (!FR.list.length) h += '<div class="em">No friends yet. Add pilots with + on the ONLINE tab, or type their callsign above.</div>';
-        if (on.length) { h += `<div class="sec">ONLINE · ${on.length}</div>`; for (const f of on) h += this.row(live.get(f.id), 'friends'); }
-        if (off.length) {
-          h += `<div class="sec">OFFLINE · ${off.length}</div>`;
-          for (const f of off) h += `<div class="r"><span class="dot off"></span><div class="n"><b>${esc(f.display)}</b><i class="off">OFFLINE${f.last ? ' · ' + ago(f.last) : ''}</i></div><button class="alt ic" data-a="frem" data-id="${esc(f.id)}" data-n="${esc(f.display)}" title="Remove friend">✕</button></div>`;
-        }
-        const am = FR.addedMe.filter(f => !FR.ids.has(f.id));
-        if (am.length) {
-          h += `<div class="sec">ADDED YOU</div>`;
-          for (const f of am) h += `<div class="r"><span class="dot ${live.has(f.id) ? '' : 'off'}"></span><div class="n"><b>${esc(f.display)}</b><i class="${live.has(f.id) ? '' : 'off'}">${live.has(f.id) ? esc(doing(live.get(f.id).l).t) : 'OFFLINE'}</i></div><button data-a="fadd" data-id="${esc(f.id)}">ADD BACK</button></div>`;
-        }
-      }
-      const ft = !me ? '' : (this.edit
-        ? `<div class="l"><input name="dn" maxlength="14" value="${esc(me.display)}"><button data-a="eds">SAVE</button><button class="alt" data-a="edx">✕</button></div>`
-        : `<div class="l"><span>SHOWN AS <b style="color:#eef">${esc(me.display)}</b> <a data-a="ed">EDIT</a></span></div>`)
-        + (me ? `<div class="l"><span>LOGIN: ${esc(me.callsign)}</span><button class="alt" data-a="out">SIGN OUT</button></div>` : '');
-      const key = h + '|' + ft;
-      if (key === this.lastH) return;
-      this.lastH = key;
-      this.el.querySelector('.body').innerHTML = h;
-      this.el.querySelector('.ft').innerHTML = ft;
-    }
-  };
-  // Visible only in the hangar menus (st 0), never in flight; opens by itself after sign-in.
+  // ------------------------------------------------------------------ native game pages: ONLINE · FRIENDS · pilot · ACCOUNT & SAVES
+  // Built on the game's own menu system (PAGES / goPage / MENUOWN / logPanel), so they look and
+  // behave like every other hangar page: arrow keys + Enter, < BACK and Esc, the right-hand panel.
+  const NAV = { psel: null, cache: {}, landed: false };
+  const isMine = p => p === 'online' || p === 'friends' || p === 'pilot';
   function uiChanged() {
-    side.build(); if (!side.el) return;
-    const inMenus = G(() => st) === 0, show = inMenus && !ov;
-    if (show && me && uiState === 'online' && !side.auto && G(() => hpg) === 'main') {
-      side.auto = true;
-      if (SS.get('amp-side') !== 'closed') { side.isOpen = true; frLoad(); }
-    }
-    side.hdl.style.display = show && !side.isOpen ? '' : 'none';
-    side.el.style.display = show && side.isOpen ? '' : 'none';
-    side.render();
+    // signed out / offline: the game's cloud-save status would wait on 'boot' forever; show it as local.
+    // (Its pending cloudBoot resumes by itself the moment the player signs in.)
+    if (!me) { const C = G(() => CLD); if (C && C.st === 'boot') { C.st = 'local'; C.err = ''; } }
+    // after signing in, land on the ONLINE page once per visit
+    if (!me || NAV.landed || ov) return;
+    if (G(() => st) !== 0 || G(() => hpg) !== 'main' || G(() => INTRO.on)) return;
+    NAV.landed = true;
+    try { goPage('online'); } catch (e) {}
   }
   setInterval(uiChanged, 700);
-  setInterval(() => { if (me && side.isOpen && side.tab === 'friends' && Date.now() - FR.t > 20000) frLoad(); }, 5000);
+  setInterval(() => { if (me && isMine(G(() => hpg)) && Date.now() - FR.t > 8000) frLoad(); }, 2000);
 
-  // Hooks into the game once it has loaded: an ONLINE · FRIENDS row in the main hangar menu,
-  // and INVITE buttons on BATTLE ▸ MULTIPLAYER's own player list.
+  function cached(key, fn) {
+    const c = NAV.cache[key], now = Date.now();
+    if (c && now - c.t < 400) return c.rows;
+    const rows = fn(); NAV.cache[key] = { t: now, rows }; return rows;
+  }
+  function openPilot(o) { NAV.psel = o; try { snd('ok'); } catch (e) {} goPage('pilot'); }
+  function addFriendPrompt() {
+    try { askText('Add a friend', '', v => frAdd({ callsign: v }), { max: 14, keep: 1, hint: 'Their login callsign or display callsign · ENTER to add' }); } catch (e) {}
+  }
+  function editDisplay() {
+    try { askText('Your display callsign', me ? me.display : '', v => setDisplay(v), { max: 14, keep: 1, hint: 'What other pilots see in lobbies, battles and on the leaderboard' }); } catch (e) {}
+  }
+  const BACK = d => ({ l: '< BACK', go: 'main', d: d || 'Back.' });
+  const pilotRow = (o, from) => {
+    const fr = o.uid && FR.ids.has(o.uid);
+    return { l: (fr ? '★ ' : '● ') + o.cs, a: () => openPilot(Object.assign({ from }, o)), d: () => doing(o.l).t + (fr ? ' · FRIEND' : '') + '. ENTER: invite to a match' + (o.uid && !fr ? ' or add as a friend.' : '.') };
+  };
+
+  function onlineRows() {
+    const R = [BACK('Back to the hangar.')];
+    if (!me) {
+      R.push({ l: 'SIGN IN', a: () => showLogin(), d: 'Sign in with your login callsign and password to see who is online, keep a friends list and invite people to matches.' },
+        { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? You need the invite code from whoever runs this server.' },
+        { l: 'ACCOUNT & SAVES', go: 'acct', d: 'Save files: export, import, copy or paste a save code. Works without an account.' });
+      return R;
+    }
+    const L = pilots(), onF = L.filter(o => o.uid && FR.ids.has(o.uid)).length;
+    R.push({ l: 'FRIENDS · ' + onF + ' / ' + FR.list.length + ' ONLINE', go: 'friends', d: 'Your friends list: who is online, what they are doing, and invites.' + (FR.addedMe.filter(f => !FR.ids.has(f.id)).length ? ' Someone added you: add them back there.' : '') },
+      { l: 'ADD A FRIEND', a: addFriendPrompt, d: 'Type a pilot\'s callsign to add them to your friends list.' },
+      { l: 'ACCOUNT & SAVES', go: 'acct', d: 'Your callsign, cloud save, save files, sign out.' });
+    if (uiState !== 'online') R.push({ l: 'RECONNECTING…', a: () => toast('RECONNECTING TO THE SERVER…', HY), d: 'Lost the connection to the server. Retrying automatically.' });
+    else if (!L.length) R.push({ l: 'NOBODY ELSE ONLINE', a: () => toast('NOBODY ELSE IS ONLINE RIGHT NOW', HY), d: 'Pilots appear here the moment they open the game and sign in.' });
+    for (const o of L) R.push(pilotRow(o, 'online'));
+    return R;
+  }
+  function friendRows() {
+    const R = [{ l: '< BACK', go: 'main', d: 'Back to ONLINE.' }, { l: 'ADD A FRIEND', a: addFriendPrompt, d: 'Type a pilot\'s callsign to add them to your friends list.' }];
+    const live = new Map(pilots().filter(o => o.uid).map(o => [o.uid, o]));
+    for (const f of FR.list) {
+      const o = live.get(f.id);
+      if (o) R.push(pilotRow(o, 'friends'));
+      else R.push({ l: '○ ' + f.display, a: () => openPilot({ from: 'friends', off: 1, uid: f.id, cs: f.display, last: f.last }), d: 'OFFLINE' + (f.last ? ' · ' + ago(f.last) : '') + '. ENTER: options.' });
+    }
+    for (const f of FR.addedMe.filter(f => !FR.ids.has(f.id)))
+      R.push({ l: '+ ' + f.display + ' · ADDED YOU', a: () => frAdd({ id: f.id }), d: f.display + ' added you as a friend. ENTER: add them back.' });
+    if (!FR.list.length && R.length === 2) R.push({ l: 'NO FRIENDS YET', a: addFriendPrompt, d: 'Add pilots from the ONLINE page, or type their callsign with ADD A FRIEND.' });
+    return R;
+  }
+  function pilotRows() {
+    const o0 = NAV.psel, R = [BACK('Back.')];
+    if (!o0) return R;
+    // follow the pilot if they reconnect (new peer id) or go offline
+    const o = (o0.uid && pilots().find(p => p.uid === o0.uid)) || pilots().find(p => p.peer === o0.peer) || null;
+    const fr = o0.uid && FR.ids.has(o0.uid);
+    if (o) {
+      const pend = INV.out && INV.out.to === o.peer;
+      for (const k of ['d1', 'air', 'sq'])
+        R.push({ l: (pend ? '… ' : 'INVITE · ') + MODES[k].name, a: () => pend ? toast('WAITING FOR ' + o.cs + ' TO ANSWER', HY) : sendInvite(o, k), d: MODES[k].d + (o.l && o.l.st === 'battle' ? ' They are in a battle: accepting takes them out of it.' : '') });
+    }
+    if (o0.uid) {
+      if (fr) R.push({ l: 'REMOVE FRIEND', a: () => frRemove(o0.uid, o0.cs), d: 'Take ' + o0.cs + ' off your friends list.' });
+      else R.push({ l: 'ADD FRIEND', a: () => frAdd({ id: o0.uid }), d: 'Add ' + o0.cs + ' to your friends list.' });
+    }
+    if (!o) R.push({ l: 'OFFLINE', a: () => toast(o0.cs + ' IS OFFLINE', HY), d: o0.cs + ' is not online right now' + (o0.last ? ' (' + ago(o0.last).toLowerCase() + ')' : '') + '. Invites need them online.' });
+    return R;
+  }
+
+  // ACCOUNT & SAVES: replaces the claude.ai account page; save transfer folded in
+  function acctRows() {
+    const R = [BACK('Back.')];
+    const sv = G(() => PAGES.svt.rows) || [];
+    const svRow = re => sv.find(r => r && re.test(r.l));
+    if (me) {
+      R.push({ l: 'CALLSIGN: ' + me.display + '  ✎', a: editDisplay, d: 'Your display callsign, shown to other pilots. Your login stays ' + me.callsign + '.' },
+        { l: 'SYNC NOW', a: () => { try { save(); } catch (e) {} if (typeof cloudPush !== 'function' || !G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } cloudPush(1).then(() => toast(CLD.err ? 'SYNC FAILED · ' + CLD.err : 'SAVED TO YOUR ACCOUNT', CLD.err ? HR : HG)); }, d: 'Upload your progress, builds and settings now. It also happens every 20 seconds and when you leave.' },
+        { l: 'RESTORE FROM CLOUD', a: async () => { if (!G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } try { const got = await cloudPull(1); if (got) cloudApply(); else toast('NO CLOUD SAVE YET', HY); } catch (e) { toast('RESTORE FAILED', HR); } }, d: 'Replace this device\'s progress with the copy saved to your account.' });
+    } else {
+      R.push({ l: 'SIGN IN', a: () => showLogin(), d: 'Sign in to keep your progress in the cloud and play online.' },
+        { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? You need the invite code from whoever runs this server.' });
+    }
+    for (const re of [/^EXPORT SAVE FILE/, /^IMPORT SAVE FILE/, /^COPY SAVE CODE/, /^PASTE SAVE CODE/, /^UNDO LAST IMPORT/]) { const r = svRow(re); if (r) R.push(r); }
+    if (me) R.push({ l: 'SIGN OUT', a: () => { if (confirm('Sign out of ' + me.callsign + ' on this browser?')) signOut(); }, d: 'Sign out on this browser. Your progress stays saved to your account.' });
+    return R;
+  }
+
+  // right-hand panels (same drawing kit as the game's own account / update-log panels)
+  function sidePanel(px, T) {
+    const pw = rpanel(px, T); let y = T + 24 * UF;
+    const head = t => { tx(t, px, y, HG, 'left', 14, 1); y += 24 * UF; };
+    const row = (a, b, c, d) => { tx(a, px, y, c || HW, 'left', 11, 1); if (b) { y += 13 * UF; tx(b, px + 10 * UF, y, d || HGd, 'left', 9.5); } y += 18 * UF; };
+    const para = s => { wrapT(s, pw, 10).forEach(l => { tx(l, px, y, HW, 'left', 10); y += 13 * UF; }); y += 6 * UF; };
+    const maxY = CH_ - SA.b - 48 * UF;
+    if (!me) { head('[ ONLINE ]'); para('Sign in to see who is online, keep a friends list and invite pilots to duels, team-ups and squadron attacks. Your progress also syncs to your account.'); return; }
+    if (hpg === 'pilot' && NAV.psel) {
+      const o0 = NAV.psel, o = (o0.uid && pilots().find(p => p.uid === o0.uid)) || null, fr = o0.uid && FR.ids.has(o0.uid);
+      head('[ ' + o0.cs + ' ]');
+      const d = o ? doing(o.l) : { t: 'OFFLINE' + (o0.last ? ' · ' + ago(o0.last) : ''), c: 'off' };
+      row('STATUS', d.t, HGd, d.c === 'bt' ? HR : d.c === 'q' ? HY : o ? HG : HGd);
+      row('FRIEND', fr ? 'ON YOUR FRIENDS LIST' : 'NOT ON YOUR LIST', HGd, fr ? HG : HGd);
+      if (INV.out && o && INV.out.to === o.peer) row('INVITE', 'SENT · WAITING FOR AN ANSWER', HGd, HY);
+      y += 6 * UF; para('Invites are jet matches on an air-battle map. They get a pop-up with ACCEPT (Y) and DECLINE (N) and 30 seconds to answer.');
+      return;
+    }
+    const L = pilots();
+    if (hpg === 'friends') {
+      const live = new Set(L.map(o => o.uid));
+      head('[ FRIENDS · ' + FR.list.filter(f => live.has(f.id)).length + ' / ' + FR.list.length + ' ONLINE ]');
+      if (!FR.list.length) para('No friends yet. Pick a pilot on the ONLINE page and choose ADD FRIEND, or use ADD A FRIEND with their callsign.');
+      for (const f of FR.list) {
+        if (y > maxY) break;
+        const o = L.find(p => p.uid === f.id), d = o ? doing(o.l) : null;
+        row((o ? '● ' : '○ ') + f.display, o ? d.t : 'OFFLINE' + (f.last ? ' · ' + ago(f.last) : ''), o ? HW : HGd, o ? (d.c === 'bt' ? HR : d.c === 'q' ? HY : HG) : HGd);
+      }
+      return;
+    }
+    head('[ PILOTS ONLINE · ' + L.length + ' ]');
+    if (uiState !== 'online') { para('Reconnecting to the server…'); return; }
+    if (!L.length) para('Nobody else is online right now. Pilots appear here the moment they open the game and sign in.');
+    for (const o of L) {
+      if (y > maxY) break;
+      const d = doing(o.l), fr = o.uid && FR.ids.has(o.uid);
+      row((fr ? '★ ' : '● ') + o.cs, d.t, HW, d.c === 'bt' ? HR : d.c === 'q' ? HY : HG);
+    }
+    y += 6 * UF;
+    if (y < maxY) para('SIGNED IN AS ' + me.display + '. Pick a pilot to invite them or add them as a friend.');
+  }
+  function acctPanel2(px, T) {
+    const pw = rpanel(px, T); let y = T + 24 * UF;
+    const L = (a, b, c) => { tx(a, px, y, HGd, 'left', 10, 1); tx(String(b), px + pw, y, c || HW, 'right', 11, 1); y += 18 * UF; };
+    tx('[ ACCOUNT & SAVES ]', px, y, HG, 'left', 14, 1); y += 24 * UF;
+    const C = G(() => CLD) || {};
+    if (me) { L('LOGIN', me.callsign); L('SHOWN AS', me.display, HG); }
+    else L('ACCOUNT', 'NOT SIGNED IN', HY);
+    L('CLOUD SAVE', C.st === 'sync' ? 'ON' : C.st === 'boot' ? 'CONNECTING…' : 'THIS DEVICE ONLY', C.st === 'sync' ? HG : HY);
+    if (C.ts) L('LAST UPLOAD', ago(C.ts).replace('SEEN ', ''));
+    let sz = 0; try { sz = (localStorage.getItem(LSK) || '').length; } catch (e) {}
+    L('SAVE SIZE', Math.round(sz / 1024) + ' KB');
+    L('SAVED BUILDS', String(G(() => OPT.lib.sl.length) || 0));
+    y += 8 * UF;
+    wrapT(me ? 'Your progress, money, research, unlocks, settings, workshop designs and build library are saved to your ASKIIES account every 20 seconds and when you leave, and follow you to any device you sign in on. Save files are a manual backup you can keep or move anywhere.'
+      : 'Progress is saved on this device. Sign in to keep it in the cloud, or use EXPORT SAVE FILE to back it up and IMPORT SAVE FILE to load it elsewhere.', pw, 10).forEach(l => { tx(l, px, y, HW, 'left', 10); y += 13 * UF; });
+  }
+
   addEventListener('load', () => {
     try {
+      PAGES.online = { t: 'ONLINE', get rows() { return cached('online', onlineRows); } };
+      PAGES.friends = { t: 'FRIENDS', get rows() { return cached('friends', friendRows); } };
+      PAGES.pilot = { get t() { return NAV.psel ? NAV.psel.cs : 'PILOT'; }, get rows() { return cached('pilot', pilotRows); } };
+      PAGES.acct = { t: 'ACCOUNT & SAVES', get rows() { return cached('acct', acctRows); } };
+      MENUOWN.friends = 'online';
+      for (const p of ['online', 'friends', 'pilot', 'acct']) { PGX[p] = 1; try { CAMP[p] = CAMP.log || CAMP.main; } catch (e) {} }
+      // parents that depend on where you came from
+      const _g = goPage;
+      goPage = function (p) {   // eslint-disable-line no-global-assign
+        const from = G(() => hpg);
+        if (p === 'acct' && from && from !== 'svt' && from !== 'acct') MENUOWN.acct = from === 'main' ? undefined : from;
+        if (p === 'pilot' && from && from !== 'pilot') MENUOWN.pilot = from === 'main' ? undefined : from;
+        NAV.cache = {};
+        if (me && (isMine(p) || p === 'acct') && Date.now() - FR.t > 3000) frLoad();
+        return _g.apply(this, arguments);
+      };
+      const _lp = logPanel;
+      logPanel = function (px, T) {   // eslint-disable-line no-global-assign
+        if (isMine(hpg)) return sidePanel(px, T);
+        if (hpg === 'acct') return acctPanel2(px, T);
+        return _lp.apply(this, arguments);
+      };
+      // ONLINE row on the hangar menu (hangar-menu.js puts it in place)
       const R = PAGES.main.rows;
       if (Array.isArray(R) && !R.some(r => r.amp)) {
-        R.splice(1, 0, {
-          amp: 1, l: 'ONLINE · FRIENDS',
-          a: () => { try { snd('ui'); } catch (e) {} if (me) side.toggle(); else showLogin(); },
-          d: () => !me ? 'Sign in to see who is online, add friends and invite them to a match.'
-            : 'Who is online right now, your friends list and what everyone is doing. Invite anyone to a duel, a team-up or a squadron attack.'
+        R.splice(2, 0, {
+          amp: 1, go: 'online',
+          get l() { return !me ? 'ONLINE · SIGN IN' : 'ONLINE · ' + pilots().length + (FR.list.length ? ' · ★ ' + pilots().filter(o => o.uid && FR.ids.has(o.uid)).length : ''); },
+          d: () => !me ? 'Sign in to see who is online, keep a friends list and invite pilots to matches.'
+            : 'Who is online and what they are doing, your friends list, invites, and your account & saves.'
         });
       }
-    } catch (e) { console.warn('[mp] could not add the ONLINE menu row', e); }
+    } catch (e) { console.warn('[mp] could not build the online pages', e); }
+    // INVITE buttons on BATTLE ▸ MULTIPLAYER's own player list open the pilot page
     const orig = G(() => mplUI);
     if (typeof orig !== 'function') return;
     try {
@@ -675,7 +687,7 @@
             const pend = INV.out && INV.out.to === p.peer;
             U.fillStyle = pend ? 'rgba(160,130,40,.75)' : 'rgba(47,159,90,.9)'; U.fillRect(bx, by, bw, bh);
             tx(pend ? 'INVITED' : 'INVITE', bx + bw / 2, by + 10.5 * UF, '#fff', 'center', 7, 1);
-            if (!pend) hits.push({ x: bx, y: by, w: bw, h: bh, fn: () => { try { snd('ui'); } catch (e) {} side.open(p.peer); } });
+            if (!pend) hits.push({ x: bx, y: by, w: bw, h: bh, fn: () => { const o = pilots().find(q => q.peer === p.peer); if (o) openPilot(Object.assign({ from: 'mpl' }, o)); } });
           });
         } catch (e) {}
         return r;
@@ -683,6 +695,6 @@
     } catch (e) {}
   });
 
-  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', () => { uiChanged(); boot(); }, { once: true });
-  else { uiChanged(); boot(); }
+  if (document.readyState === 'loading') addEventListener('DOMContentLoaded', () => boot(), { once: true });
+  else boot();
 })();
