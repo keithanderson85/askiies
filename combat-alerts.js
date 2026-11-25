@@ -1,4 +1,4 @@
-/* ASKIIES combat alerts (combat-alerts.js v1.1.0)
+/* ASKIIES combat alerts (combat-alerts.js v1.2.0)
  *
  * Loaded after the game (and plane-engine.js), before </body>. Adds:
  *
@@ -120,7 +120,8 @@
     let lock = null, trk = null;
     for (const T of A.thr) { if (T.k === 'lock') lock = lock || T; else if (T.k === 'trk') trk = trk || T; }
     A.lockT -= dt;
-    if (A.lockT <= 0 && (lock || trk) && G(() => aOK())) {
+    const realLock = lock && rwrHas('lock');                         // REAL: the recorded lock tone loops instead
+    if (A.lockT <= 0 && ((lock && !realLock) || (!lock && trk)) && G(() => aOK())) {
       G(() => {
         const t = AX.currentTime, d = aCh(.6, 0, 0);
         if (lock) { aOs(d, t, { ty: 'square', f: 1900, d: .05, v: .055 }); aOs(d, t + .08, { ty: 'square', f: 1900, d: .05, v: .055 }); }
@@ -212,37 +213,102 @@
     };
   }
 
-  // ------------------------------------------------------------------ "Bitchin' Betty" voice
-  // The game speaks its cockpit warnings (VOICE WARNINGS option) through the browser's text-to-speech,
-  // which sounds different on every device, is often quiet and is missing on some phones. These are
-  // recorded clips (betty/*.wav, one consistent female voice) played through a cockpit-radio filter
-  // in the game's own audio mix (SFX volume applies). The game's speech calls are routed here; until
-  // the clips have loaded, or for anything without a clip, the browser voice is used as before.
-  const BASE = new URL('betty/', (document.currentScript && document.currentScript.src) || location.href);
-  const BKEYS = ['pull', 'msl', 'launch', 'fire', 'stall', 'alt', 'bank', 'warn', 'over', 'g', 'bingo', 'lock'];
+  // ------------------------------------------------------------------ "Bitchin' Betty" voice + real cockpit tones
+  // OPTIONS > GAMEPLAY > VOICE WARNINGS:  OFF  /  TTS  /  REAL
+  //   TTS : generated voice clips (betty/*.wav, one consistent female voice) through a cockpit-radio filter
+  //   REAL: real recordings from sounds/betty/ picked by file name (see sounds/betty/README.txt), played
+  //         as recorded; the generated voice fills in anything missing. Also the real caution chime
+  //         ("deedle") before caution calls and the real RWR tones: new contact, lock (loops while you
+  //         are locked) and missile launch (loops while a missile is coming).
+  // The game's speech calls are routed here, so its own warning logic (when, cooldowns, the caution box)
+  // is unchanged. Devices without text-to-speech get the voice too.
+  const SCRIPT = (document.currentScript && document.currentScript.src) || location.href;
+  const GEN = new URL('betty/', SCRIPT), REAL = new URL('sounds/betty/', SCRIPT);
+  const BKEYS = ['pull', 'msl', 'launch', 'fire', 'stall', 'alt', 'bank', 'warn', 'over', 'g', 'bingo', 'fuel', 'lock'];
   for (let i = 1; i <= 12; i++) BKEYS.push('c' + i);
-  const BETTY = { buf: {}, real: {}, loading: 0, chain: null, srcs: [], pri: 0, end: 0, endT: 0, onend: null };
+  const CAUTION = new Set(['fire', 'stall', 'alt', 'bank', 'warn', 'over', 'g', 'bingo', 'fuel']);   // chime first (REAL)
+  const NUM = ['one', 'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'nine', 'ten', 'eleven', 'twelve'];
+  // a real file's name -> what it is (first match wins; names are lower-cased, punctuation -> spaces)
+  const NAME_RULES = [
+    [/\bdeedle\b|\bcaution\b|\bchime\b/, 'T:caution'],
+    [/\brwr\b.*\b(launch|missile)\b|\b(launch|missile)\b.*\brwr\b/, 'T:launch'],
+    [/\brwr\b.*\block\b|\block\b.*\brwr\b/, 'T:lock'],
+    [/\brwr\b.*\b(new|contact|search)\b/, 'T:new'],
+    [/\brwr\b/, 'T:rwr'],
+    [/\bpull ?up\b/, 'pull'], [/\bmissile launch\b|\blaunch\b/, 'launch'], [/\bmissile\b/, 'msl'],
+    [/\bengine fire\b|\bfire\b/, 'fire'], [/\bstall\b/, 'stall'], [/\baltitude\b/, 'alt'], [/\bbank angle\b|\bbank\b/, 'bank'],
+    [/\boverspeed\b|\bover speed\b/, 'over'], [/\bover ?g\b/, 'g'], [/\bwinchester\b/, 'bingo'], [/\bbingo\b|\bfuel\b/, 'fuel'],
+    [/\block\b/, 'lock'], [/\bwarning\b/, 'warn']
+  ];
+  // one file with several RWR tones (the RWR.mp3 compilation): where each tone sits, in seconds.
+  // Loop points are cut on matching waveform cycles (lock tone repeats every 0.543 s, launch every 1.150 s).
+  const RWR_MAP = { new: [0.30, 0.78], lock: [2.60086, 8.03302], launch: [9.00016, 13.60122] };
+  const BETTY = { buf: {}, real: {}, tone: {}, loading: 0, chain: null, srcs: [], pri: 0, end: 0, endT: 0, onend: null, loop: null, loopK: null };
   G(() => { if (!VW.lock) VW.lock = { t: 'Enemy lock.', s: 'ENEMY LOCK', p: 7, cd: 6 }; });
-  // betty/real/<name>.mp3|.wav|.ogg (your own recordings) win over the generated betty/<name>.wav,
-  // and play untouched (no radio filter: real cockpit recordings already sound like the cockpit)
-  function bettyLoad() {
-    const ax = G(() => AX); if (!ax) return;                          // after the first tap/click (audio unlocked)
-    BETTY.loading = 1;
-    const get = u => fetch(u, { cache: 'no-cache' }).then(r => (r.ok && !/text\/html/.test(r.headers.get('content-type') || '') ? r.arrayBuffer() : null)).catch(() => null);
-    const dec = ab => new Promise(res => { try { ax.decodeAudioData(ab, b => res(b), () => res(null)); } catch (e) { res(null); } });
-    for (const k of BKEYS) {
-      (async () => {
-        for (const ext of ['mp3', 'wav', 'ogg']) {
-          const ab = await get(new URL('real/' + k + '.' + ext, BASE));
-          const b = ab && await dec(ab);
-          if (b) { BETTY.buf[k] = b; BETTY.real[k] = 1; return; }
-        }
-        const ab = await get(new URL(k + '.wav?v=1', BASE));
-        const b = ab && await dec(ab);
-        if (b) BETTY.buf[k] = b;
-      })();
+  G(() => { if (!VW.fuel) VW.fuel = { t: 'Bingo. Bingo.', s: 'BINGO FUEL', p: 2.5, cd: 30 }; });
+
+  const mode = () => G(() => OPT.vox | 0) || 0;                        // 0 OFF, 1 TTS, 2 REAL
+  // the game ships with voice warnings effectively OFF; switch everyone to REAL once (they can turn it off)
+  if (G(() => OPT.voxV) !== 1) G(() => { OPT.vox = 2; OPT.voxV = 1; try { save(); } catch (e) {} });
+  G(() => { LISTS.vox = () => ['OFF', 'TTS', 'REAL']; });
+  G(() => {
+    for (const pg of Object.values(PAGES)) for (const r of (pg && Array.isArray(pg.rows) ? pg.rows : [])) {
+      if (r && r.k === 'vox') r.d = 'Cockpit voice warnings (pull up, missile + clock, bank angle, stall...). TTS: a generated voice. REAL: real recordings from the sounds folder, plus the real caution chime and RWR lock / launch tones; the generated voice fills in anything missing.';
     }
+  });
+
+  function decode(ab) { return new Promise(res => { try { AX.decodeAudioData(ab, b => res(b), () => res(null)); } catch (e) { res(null); } }); }
+  const getAB = u => fetch(u, { cache: 'no-cache' }).then(r => (r.ok && !/text\/html/.test(r.headers.get('content-type') || '') ? r.arrayBuffer() : null)).catch(() => null);
+  function bettyLoad() {
+    if (!G(() => AX)) return;                                          // after the first tap/click (audio unlocked)
+    BETTY.loading = 1;
+    for (const k of BKEYS) getAB(new URL(k + '.wav?v=2', GEN)).then(ab => ab && decode(ab)).then(b => { if (b) BETTY.buf[k] = b; });
+    // the real folder's listing (nginx JSON autoindex): [{name, type, mtime, size}]
+    fetch(REAL, { cache: 'no-cache' }).then(r => (r.ok ? r.json() : [])).catch(() => []).then(list => {
+      for (const f of Array.isArray(list) ? list : []) {
+        if (!f || f.type !== 'file' || !/\.(mp3|wav|ogg|m4a)$/i.test(f.name)) continue;
+        const nm = f.name.replace(/\.[^.]+$/, '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        let what = null;
+        const clock = /\b(\d{1,2}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve) ?o ?clock\b/.exec(nm);
+        if (clock) { const n = isNaN(+clock[1]) ? NUM.indexOf(clock[1]) + 1 : +clock[1]; if (n >= 1 && n <= 12) what = 'c' + n; }
+        if (!what) for (const [re, k] of NAME_RULES) if (re.test(nm)) { what = k; break; }
+        if (!what) continue;
+        getAB(new URL(encodeURIComponent(f.name) + '?v=' + encodeURIComponent(f.mtime || ''), REAL)).then(ab => ab && decode(ab)).then(b => {
+          if (!b) return;
+          if (what[0] === 'T') BETTY.tone[what.slice(2)] = b; else BETTY.real[what] = b;
+        });
+      }
+    });
   }
+  // a real tone: its own file, or its slice of the RWR compilation
+  function toneSrc(k) {
+    if (BETTY.tone[k]) return { b: BETTY.tone[k], s: 0, e: BETTY.tone[k].duration };
+    if (BETTY.tone.rwr && RWR_MAP[k] && BETTY.tone.rwr.duration >= RWR_MAP[k][1]) return { b: BETTY.tone.rwr, s: RWR_MAP[k][0], e: RWR_MAP[k][1] };
+    return null;
+  }
+  const rwrHas = k => mode() === 2 && !!toneSrc(k);
+  function toneOnce(k, vol) {
+    const t = toneSrc(k); if (!t || !G(() => aOK())) return false;
+    const s = AX.createBufferSource(); s.buffer = t.b; s.connect(aCh(vol || .7, 0, 0));
+    s.start(AX.currentTime + .01, t.s, t.e - t.s); return true;
+  }
+  // the looping RWR tone: launch beats lock; stops the moment the threat is gone
+  function rwrLoops() {
+    let want = null;
+    if (mode() === 2 && inJet() && G(() => aOK())) {
+      if (A.thr.some(T => T.k === 'msl') && toneSrc('launch')) want = 'launch';
+      else if (A.thr.some(T => T.k === 'lock') && toneSrc('lock')) want = 'lock';
+    }
+    if (want === BETTY.loopK) return;
+    if (BETTY.loop) { try { BETTY.loop.stop(); } catch (e) {} BETTY.loop = null; }
+    BETTY.loopK = want;
+    if (!want) return;
+    const t = toneSrc(want), s = AX.createBufferSource();
+    s.buffer = t.b; s.loop = true; s.loopStart = t.s; s.loopEnd = t.e;
+    s.connect(aCh(.55, 0, 0)); s.start(AX.currentTime + .01, t.s);
+    BETTY.loop = s;
+  }
+
   function bettyChain() {
     if (BETTY.chain) return BETTY.chain;
     const ax = AX, hp = ax.createBiquadFilter(), pk = ax.createBiquadFilter(), lpf = ax.createBiquadFilter(), ws = ax.createWaveShaper(), g = ax.createGain();
@@ -260,25 +326,33 @@
     const f = BETTY.onend; BETTY.onend = null; BETTY.end = 0;
     if (f) try { f(); } catch (e) {}
   }
+  // play a call: keys = ['msl', 'c7'] etc; items are {b, filter, s, e}
   function bettyPlay(keys, pri, onend) {
-    keys = keys.filter((k, i) => i === 0 || BETTY.buf[k]);          // a missing clock clip is just skipped
-    if (!BETTY.buf[keys[0]] || !G(() => aOK())) return false;
+    const m = mode(), items = [];
+    if (m === 2 && CAUTION.has(keys[0]) && toneSrc('caution')) { const t = toneSrc('caution'); items.push({ b: t.b, f: 0, s: t.s, e: t.e }); }
+    keys.forEach((k, i) => {
+      const r = m === 2 && BETTY.real[k], b = r || BETTY.buf[k];
+      if (b) items.push({ b, f: !r, s: 0, e: b.duration });
+      else if (i === 0) items.length = 0, items.push(null);
+    });
+    if (!items.length || items.includes(null) || !items.some(x => x && x.b) || !G(() => aOK())) return false;
     if (BETTY.end > AX.currentTime && pri <= BETTY.pri) { if (onend) setTimeout(onend, 0); return true; }   // busy with something as urgent
     bettyStop();
     const ch = bettyChain(), out = aCh(1, 0, 0);
     ch.out.disconnect(); ch.out.connect(out);
     let t = AX.currentTime + .02;
-    for (const k of keys) {
-      const s = AX.createBufferSource(); s.buffer = BETTY.buf[k]; s.connect(BETTY.real[k] ? out : ch.in); s.start(t);
-      BETTY.srcs.push(s); t += BETTY.buf[k].duration + .07;
+    for (const it of items) {
+      const s = AX.createBufferSource(); s.buffer = it.b; s.connect(it.f ? ch.in : out); s.start(t, it.s, it.e - it.s);
+      BETTY.srcs.push(s); t += (it.e - it.s) + .07;
     }
     BETTY.pri = pri; BETTY.end = t; BETTY.onend = onend || null;
+    BETTY.last = items.map(it => (it.b === BETTY.tone.caution || it.b === BETTY.tone.rwr ? 'chime' : (Object.keys(BETTY.real).find(k => BETTY.real[k] === it.b) ? 'REAL ' : 'tts ') + (Object.keys(BETTY.real).find(k => BETTY.real[k] === it.b) || Object.keys(BETTY.buf).find(k => BETTY.buf[k] === it.b)))).join(' + ');
     BETTY.endT = setTimeout(() => { BETTY.srcs = []; const f = BETTY.onend; BETTY.onend = null; if (f) try { f(); } catch (e) {} }, (t - AX.currentTime) * 1000);
     return true;
   }
   function bettySay(u) {
-    const text = String((u && u.text) || '');
-    const vw = G(() => VW) || {};
+    if (!mode()) return true;                                          // OFF: nothing (the browser voice stays quiet too)
+    const text = String((u && u.text) || ''), vw = G(() => VW) || {};
     let k = null;
     for (const key in vw) if (vw[key] && vw[key].t && text.indexOf(vw[key].t) === 0) { if (!k || vw[key].t.length > vw[k].t.length) k = key; }
     if (!k || !BKEYS.includes(k)) return false;
@@ -299,6 +373,53 @@
       window.speechSynthesis = { speaking: false, pending: false, paused: false, speak: u => { bettySay(u); }, cancel: bettyStop, pause() {}, resume() {}, getVoices: () => [] };
     } catch (e) {}
   }
+  // the pause menu's VOICE WARNINGS toggle only knew ON/OFF: show and cycle OFF / TTS / REAL
+  if (typeof pTog === 'function') {
+    const _pt = pTog;
+    pTog = function (x, y, w, h, label, val, fn) {                    // eslint-disable-line no-global-assign
+      if (label === 'VOICE WARNINGS') { val = ['OFF', 'TTS', 'REAL'][mode()] || 'OFF'; fn = () => { OPT.vox = (mode() + 1) % 3; try { save(); snd('ui'); } catch (e) {} }; }
+      return _pt.call(this, x, y, w, h, label, val, fn);
+    };
+  }
+  // the game says "bingo" for both BINGO FUEL and WINCHESTER (out of stores): fuel gets its own call
+  if (typeof msg === 'function') {
+    const _m = msg;
+    msg = function (t) { A.lastMsg = String(t); A.lastMsgT = G(() => rt); return _m.apply(this, arguments); };   // eslint-disable-line no-global-assign
+  }
+  if (typeof vox === 'function') {
+    const _v = vox;
+    vox = function (k, x) {                                            // eslint-disable-line no-global-assign
+      if (k === 'bingo' && A.lastMsgT === G(() => rt) && /^BINGO FUEL/.test(A.lastMsg || '')) k = 'fuel';
+      return _v.call(this, k, x);
+    };
+  }
+  // REAL tones replace the game's synthetic ones where we have them
+  if (typeof voxCue === 'function') {
+    const _vc = voxCue;
+    voxCue = function (k) {                                            // eslint-disable-line no-global-assign
+      if (mode() === 2 && ((CAUTION.has(k) && toneSrc('caution')) || ((k === 'msl' || k === 'launch') && toneSrc('launch')))) return;
+      return _vc.apply(this, arguments);
+    };
+  }
+  if (typeof rwrNew === 'function') {
+    const _rn = rwrNew;
+    rwrNew = function () { if (mode() === 2 && toneOnce('new', .55)) return; return _rn.apply(this, arguments); };   // eslint-disable-line no-global-assign
+  }
+  if (typeof rwrLock === 'function') {
+    const _rl = rwrLock;
+    rwrLock = function () { if (BETTY.loopK) return; return _rl.apply(this, arguments); };   // eslint-disable-line no-global-assign
+  }
+  if (typeof rwrLaunch === 'function') {
+    const _rla = rwrLaunch;
+    rwrLaunch = function () { if (rwrHas('launch')) return; return _rla.apply(this, arguments); };   // eslint-disable-line no-global-assign
+  }
+  if (typeof tone === 'function') {
+    const _t = tone;
+    tone = function (f, d, v, ty) {                                    // eslint-disable-line no-global-assign
+      if (BETTY.loopK === 'launch' && ty === 'sawtooth' && (f === 760 || f === 560)) return;   // the synthetic missile tone
+      return _t.apply(this, arguments);
+    };
+  }
 
   // ------------------------------------------------------------------ per frame
   const _up = update;
@@ -314,6 +435,7 @@
     if (st !== 1 || !P) {
       A.lastHp = null; A.cmSum = null; A.txt = null; A.hits.length = 0; A.ev.length = 0;
       for (const [k, g] of A.ghosts) ghostDrop(k, g);
+      rwrLoops();
       if (inBattle()) G(() => pvpTick());                              // keep reading flares while in menus
       return;
     }
@@ -324,6 +446,7 @@
     if (inJet()) aiThreats();
     if (inBattle()) pvpTick();
     if (inJet()) { pvpSounds(dt); lockSounds(dt); } else A.wasLock = false;
+    rwrLoops();
     // damage this frame -> the hit line
     const hp = P.hp;
     if (A.lastHp == null || hp > A.lastHp + .01) A.lastHp = hp;           // new sortie / repairs
@@ -477,8 +600,8 @@
   }
 
   window.ASKIIES_ALERTS = {
-    version: '1.1.0',
-    betty: () => Object.keys(BETTY.buf).length + '/' + BKEYS.length + ' loaded, ' + Object.keys(BETTY.real).length + ' real',
+    version: '1.2.0',
+    betty: () => ({ mode: ['OFF', 'TTS', 'REAL'][mode()], tts: Object.keys(BETTY.buf).length + '/' + BKEYS.length, real: Object.keys(BETTY.real), tones: Object.keys(BETTY.tone), loop: BETTY.loopK, last: BETTY.last }),
     say: (k, clock) => bettyPlay(clock ? [k, 'c' + clock] : [k], 99),
     talking: () => !!(G(() => AX) && BETTY.end > AX.currentTime),
     state: () => ({ threats: A.thr.map(t => t.k + (t.pvp ? ':pvp' : '') + ':' + t.nm), ghosts: A.ghosts.size, cm: A.cm, hit: A.txt && A.txt.k })
