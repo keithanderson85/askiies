@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.5.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.6.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -27,13 +27,13 @@
   //   RIGHT button, hold + move = look around the jet (drives the game's own camera-look stick);
   //                               let go and the camera swings back behind the jet
   //   MIDDLE click              = lock the target under the cursor / release on empty sky (the game's lock)
-  const LOOK = { on: 0, x0: 0, y0: 0 };
+  const LOOK = { on: 0, x0: 0, y0: 0, dx: 0, dy: 0 };
   const GG = f => { try { return f(); } catch (e) { return undefined; } };
   const flyingNow = () => GG(() => st) === 1 && !GG(() => CIN) && !GG(() => VEHM) && !!GG(() => P) && !GG(() => P.dead);
   function lookEnd() { if (!LOOK.on) return; LOOK.on = 0; window.__ampLook = 0; try { cs = null; cjx = 0; cjy = 0; } catch (e) {} }   // eslint-disable-line no-undef
   addEventListener('pointerdown', e => {
     if (e.pointerType !== 'mouse' || e.button !== 2 || !flyingNow()) return;
-    LOOK.on = 1; LOOK.x0 = e.clientX; LOOK.y0 = e.clientY; window.__ampLook = 1;
+    LOOK.on = 1; LOOK.x0 = e.clientX; LOOK.y0 = e.clientY; LOOK.dx = 0; LOOK.dy = 0; window.__ampLook = 1;
     try { cs = 'rmb'; cjx = 0; cjy = 0; } catch (x) {}                                         // eslint-disable-line no-undef
     e.stopImmediatePropagation(); e.preventDefault();                                          // right-click no longer locks
   }, true);
@@ -41,9 +41,13 @@
     if (!LOOK.on) return;
     if (!(e.buttons & 2) || !flyingNow()) { lookEnd(); return; }
     const w = GG(() => CW_) || innerWidth, h = GG(() => CH_) || innerHeight;
+    // MOUSE AIM captures the mouse (pointer lock): the cursor stays put, so add up the movement instead
+    if (document.pointerLockElement) { LOOK.dx += e.movementX || 0; LOOK.dy += e.movementY || 0; }
+    else { LOOK.dx = e.clientX - LOOK.x0; LOOK.dy = e.clientY - LOOK.y0; }
+    LOOK.dx = Math.max(-w * .3, Math.min(w * .3, LOOK.dx)); LOOK.dy = Math.max(-h * .35, Math.min(h * .35, LOOK.dy));
     try {
-      cjx = Math.max(-1, Math.min(1, (e.clientX - LOOK.x0) / (w * .3)));                     // eslint-disable-line no-undef
-      cjy = Math.max(-1, Math.min(1, (e.clientY - LOOK.y0) / (h * .35)));                    // eslint-disable-line no-undef
+      cjx = LOOK.dx / (w * .3);                                                                // eslint-disable-line no-undef
+      cjy = LOOK.dy / (h * .35);                                                               // eslint-disable-line no-undef
     } catch (x) {}
   }, true);
   addEventListener('pointerup', e => { if (e.button === 2) lookEnd(); }, true);
@@ -177,6 +181,8 @@
         return () => { R.cbs = R.cbs.filter(x => x !== e); };
       },
       presence(obj) {
+        // combat-alerts.js adds lock / missile / flare data to battle presence through this hook
+        if (obj && typeof obj === 'object' && typeof window.__ampPres === 'function') { try { obj = window.__ampPres(obj) || obj; } catch (e) {} }
         R.mine = (obj && typeof obj === 'object') ? JSON.parse(JSON.stringify(obj)) : null;
         net.send({ t: 'pres', room: R.name, p: R.mine });
         R.notify();
@@ -239,7 +245,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.5.1', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
+  window.ASKIIES_MP = { version: '1.6.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,

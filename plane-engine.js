@@ -797,6 +797,7 @@
         py.name = 'pylon';
         py.position.copy(oldLg.position);
         py.quaternion.copy(oldLg.quaternion);
+        if (oldLg.userData && oldLg.userData.swc) py.userData.swc = 1;
         py.add(mkMesh(compile(built.pylonParts, pal, built.o)));
         par.add(py);
       }
@@ -826,6 +827,7 @@
           bay: h.bay ? 1 : 0,
           pod: stItem.isPod ? 1 : 0,
           bomb: stItem.isBomb ? 1 : 0,
+          swc: (oldLg.userData && oldLg.userData.swc) ? 1 : 0,
           slot: si
         };
         sg.add(mkMesh(compile(stItem.parts, pal, storeCenter)));
@@ -870,6 +872,38 @@
   function peLeft(kind) { return kind === 'sp' ? (P.sp | 0) : kind === 'arh' ? (P.rd | 0) : (P.ir | 0); }
 
   // Make the model show exactly what is left (never more), for stock jets and custom Workshop jets
+  function peSyncAmmoToStations() {
+    if (!OPT.rrail || !P || !PJ || !pp || !pp.ld || (typeof VEHM !== 'undefined' && VEHM)) return;
+    if (OPT.ac === 11) return; // Custom Workshop/Armory aircraft already track exact mounted stores in P.cg
+
+    const isBay = !!(PJ.userData && PJ.userData.bay);
+    const nIR = peStations('ir').length;
+    const nRD = peStations('arh').length;
+    const nSP = peStations('sp').length;
+    const Wp = (typeof SPW !== 'undefined') ? SPW[OPT.sp] : null;
+    const isPodSp = !!(Wp && (Wp.k === 'rkt' || Wp.k === 'eml' || Wp.k === 'mmsl'));
+
+    // Exact 1:1 rail parity: never carry more external missiles than physical stations hanging on the jet
+    if (!isBay && (nIR + nRD) > 0) {
+      P.ir = Math.min(P.ir | 0, nIR);
+      P.rd = Math.min(P.rd | 0, nRD);
+      P.ms = P.ir + P.rd;
+    }
+    if (!isPodSp && nSP > 0) {
+      P.sp = Math.min(P.sp | 0, nSP);
+    }
+    if (P.ld) {
+      if (!isBay && (nIR + nRD) > 0) {
+        P.ld.ir = P.ir;
+        P.ld.rd = P.rd;
+      }
+      if (!isPodSp && nSP > 0) {
+        P.ld.sp = P.sp;
+      }
+    }
+    if (P.rl) P.rl.length = 0;
+  }
+
   function peApplyVisibility() {
     if (!OPT.rrail || !P || !pp || !pp.ld) return;
     if (OPT.ac === 11) {
@@ -878,6 +912,7 @@
         const list = pp.ld.filter(o => o.userData.g === g.id);
         list.forEach((o, i) => { o.visible = i < (g.n | 0); });
       }
+      if (P.rl) P.rl.length = 0;
       return;
     }
     for (const kind of ['ir', 'arh', 'sp']) {
@@ -939,7 +974,8 @@
     g.traverse(o => { if (o.name === 'ld' && o.userData && o.userData.k === 'std' && !o.userData.pod) existing.push(o); });
     let extra = Math.min(PE_STA.MAXNEW, (need.ir | 0) + (need.rd | 0) - existing.length);
     if (extra <= 0) return plan;
-    const irLeft = Math.max(0, (need.ir | 0) - existing.length);
+    const wantIr = Math.max(0, (need.ir | 0) - existing.length);
+    const irLeft = (need.rd | 0) > 0 ? Math.min(wantIr, Math.floor(extra / 2)) : wantIr;
 
     const rc = new THREE.Raycaster();
     const up = new THREE.Vector3(0, 1, 0).transformDirection(g.matrixWorld);
@@ -1065,10 +1101,27 @@
     const origStart = start;
     start = function () {
       const r = origStart.apply(this, arguments);
-      try { peApplyVisibility(); } catch (e) {}
+      try {
+        peSyncAmmoToStations();
+        peApplyVisibility();
+      } catch (e) {}
       return r;
     };
   }
+
+  // Ensure the on-screen MSL button (#bMsl) always invokes the latest wrapped fireMsl() (ASKIIES bound the old ref at boot)
+  try {
+    const bMslEl = document.getElementById('bMsl');
+    if (bMslEl) {
+      bMslEl.addEventListener('pointerdown', e => {
+        if (!OPT.rrail || (typeof VEHM !== 'undefined' && VEHM) || st !== 1) return;
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        if (typeof au === 'function') au();
+        if (typeof fireMsl === 'function') fireMsl();
+      }, true);
+    }
+  } catch (e) {}
 
   // Clone actual store mesh off the rail with an active glowing exhaust flame for launched missiles
   function cloneRailProjectileMesh(railGroup, isBomb) {
@@ -1199,7 +1252,24 @@
     rearmTick = function (dt) {
       const before = P ? P.rrT : -99;
       origRearm.apply(this, arguments);
-      if (OPT.rrail && P && P.rrT !== before && pp && pp.ld) peApplyVisibility();
+      if (OPT.rrail && P && P.rrT !== before && pp && pp.ld) {
+        peSyncAmmoToStations();
+        peApplyVisibility();
+      }
+    };
+  }
+
+  // Keep swing-wing pylons aligned with airflow alongside their stores
+  if (typeof swcFix === 'function') {
+    const origSwcFix = swcFix;
+    swcFix = function (root) {
+      origSwcFix.apply(this, arguments);
+      if (!root) return;
+      root.traverse(o => {
+        if (o.userData && o.userData.swc && o.name === 'pylon' && o.parent) {
+          o.quaternion.copy(o.parent.quaternion).invert();
+        }
+      });
     };
   }
 
@@ -1220,9 +1290,75 @@
     return (OPT.mctrl | 0) > 0 && st === 1 && !CIN && P && !P.dead && !(typeof VEHM !== 'undefined' && VEHM);
   }
 
+  // ---- MOUSE AIM v2 (v1.7.0): captured mouse steering a direction in the world ----
+  // The old MOUSE AIM steered toward the cursor's spot on the screen, so the hardest turn you could
+  // ask for was wherever the screen ended. Now the first click in flight captures the mouse (pointer
+  // lock; ESC frees it) and moving the mouse swings an aim direction in the world, War Thunder style:
+  // keep moving the mouse and the jet keeps turning. With CAMERA HORIZON = LEVEL the camera looks along
+  // the aim too (9b), so the aim circle stays near the middle and the jet flies into it.
+  // Without the capture (ESC pressed, or the browser refused) the old cursor steering still works.
+  if (OPT.msens == null) OPT.msens = 1;
+  LISTS.msens = () => ['SLOW', 'NORMAL', 'FAST', 'VERY FAST'];
+  const MSENS = [.0013, .002, .003, .0044];          // radians of aim per mouse count
+  Object.assign(MC, {
+    aim: new THREE.Vector3(0, 0, -1), rt: new THREE.Vector3(1, 0, 0), tmp: new THREE.Vector3(),
+    q: new THREE.Quaternion(), Y: new THREE.Vector3(0, 1, 0), sx: 0, sy: 0, want: 0
+  });
+  const hudCanvas = () => document.getElementById('hud') || document.querySelector('canvas') || document.body;
+  const aimCaptured = () => (OPT.mctrl | 0) === 1 && !!document.pointerLockElement && isMouseFlightOn();
+  function aimReset() { if (P && P.f) MC.aim.copy(P.f); }
+  const aimLim = () => ((OPT.camh | 0) === 1 ? .8 : .42);      // cone around the nose (radians): ~46° / ~24°
+  function aimClamp(slack) {
+    // keep the aim inside a cone around the nose: wide when the camera follows the aim (LEVEL),
+    // otherwise small enough to stay on screen. Never quite vertical (no flip over the top).
+    const lim = aimLim() + (slack || 0), c = Math.cos(lim), d = MC.aim.dot(P.f);
+    if (d < c) {
+      MC.tmp.copy(MC.aim).addScaledVector(P.f, -d);
+      if (MC.tmp.lengthSq() < 1e-8) MC.tmp.copy(P.u);
+      MC.tmp.normalize();
+      MC.aim.copy(P.f).multiplyScalar(c).addScaledVector(MC.tmp, Math.sin(lim));
+    }
+    if (Math.abs(MC.aim.y) > .985) {
+      let hx = MC.aim.x, hz = MC.aim.z, hl = Math.hypot(hx, hz);
+      if (hl < 1e-4) { hx = P.f.x; hz = P.f.z; hl = Math.hypot(hx, hz) || 1; }
+      const k = Math.sqrt(1 - .985 * .985) / hl;
+      MC.aim.set(hx * k, Math.sign(MC.aim.y) * .985, hz * k);
+    }
+    MC.aim.normalize();
+  }
+  function aimTurn(dx, dy) {
+    const s = MSENS[OPT.msens | 0] || MSENS[1], cosLim = Math.cos(aimLim());
+    // each axis on its own: a move that would push the aim past the cone edge is dropped (the aim
+    // waits there while the jet catches up) instead of dragging the aim toward the nose, which made
+    // it creep up or down during hard turns
+    const d0 = MC.aim.dot(P.f);
+    MC.q.setFromAxisAngle(MC.Y, -dx * s); MC.aim.applyQuaternion(MC.q);         // mouse right = aim right
+    let d1 = MC.aim.dot(P.f);
+    if (d1 < cosLim && d1 < d0) MC.aim.applyQuaternion(MC.q.invert());
+    const d2 = MC.aim.dot(P.f);
+    MC.tmp.crossVectors(MC.aim, MC.Y);
+    if (MC.tmp.lengthSq() > 1e-4) MC.rt.copy(MC.tmp).normalize();
+    MC.q.setFromAxisAngle(MC.rt, -dy * s); MC.aim.applyQuaternion(MC.q);        // mouse up = aim up
+    d1 = MC.aim.dot(P.f);
+    if (d1 < cosLim && d1 < d2) MC.aim.applyQuaternion(MC.q.invert());
+    aimClamp(.15);                                                              // only the vertical limit + big slips
+  }
+  function aimGrab() {
+    const el = hudCanvas();
+    if (!el || !el.requestPointerLock || document.pointerLockElement) return;
+    try { const r = el.requestPointerLock(); if (r && r.catch) r.catch(() => {}); } catch (e) {}
+  }
+  document.addEventListener('pointerlockchange', () => { if (document.pointerLockElement) aimReset(); });
+  window.__peAimCam = () => aimCaptured() && !window.__ampLook;   // LEVEL camera looks along the aim (9b)
+
   // Intercept desktop mouse events ONLY when Mouse Control is turned ON (keeps default controls 100% untouched when OFF!)
   addEventListener('pointermove', e => {
     if (e.pointerType !== 'mouse') return;
+    if (document.pointerLockElement) {
+      // captured: the cursor is frozen; relative movement swings the aim (not while right-drag looking)
+      if (aimCaptured() && !window.__ampLook) aimTurn(e.movementX || 0, e.movementY || 0);
+      return;
+    }
     MC.x = e.clientX;
     MC.y = e.clientY;
     MC.init = 1;
@@ -1231,7 +1367,8 @@
   addEventListener('pointerdown', e => {
     if (e.pointerType !== 'mouse' || !isMouseFlightOn()) return;
     if (e.target && e.target.closest && e.target.closest('.b,#pz')) return;
-    MC.x = e.clientX; MC.y = e.clientY; MC.init = 1;
+    if (!document.pointerLockElement) { MC.x = e.clientX; MC.y = e.clientY; MC.init = 1; }
+    if (e.button === 0 && (OPT.mctrl | 0) === 1 && !document.pointerLockElement) aimGrab();   // click = capture the mouse
     if (e.button === 0) {
       // Left-click fires guns; stop propagation so touch-joystick drag doesn't hijack it
       au();
@@ -1273,46 +1410,54 @@
     const _uM = update;
     update = function (dt) {
       if (OPT.rrail && P && P.rl && P.rl.length) P.rl.length = 0;
+      const wasSvcd = P ? !!P.svcd : false;
 
-      if (isMouseFlightOn() && js === null && !window.__ampLook) {   // right-drag look-around pauses mouse steering
+      // leaving flight (hangar, pause, death, cutscene, ground vehicle) gives the mouse back
+      if (document.pointerLockElement && !((OPT.mctrl | 0) === 1 && isMouseFlightOn())) { try { document.exitPointerLock(); } catch (e) {} }
+      // right-drag look-around pauses cursor steering; a captured aim keeps flying toward where it was left
+      if (isMouseFlightOn() && js === null && (!window.__ampLook || aimCaptured())) {
         if (!MC.init) { MC.x = CW_ * 0.5; MC.y = CH_ * 0.5; MC.init = 1; }
         const kbManual = !!(keys.ArrowLeft || keys.ArrowRight || keys.ArrowUp || keys.ArrowDown || keys.KeyA || keys.KeyD || keys.KeyW || keys.KeyS);
         if (kbManual) {
-          // Keyboard always overrides cleanly whenever pressed
+          // Keyboard always overrides cleanly whenever pressed (a captured aim rides along with the
+          // nose, so letting go of the keys after a keyboard loop does not snap the jet back)
+          if (aimCaptured()) aimReset();
           MC.jx = lp(MC.jx, 0, Math.min(1, dt * 10));
           MC.jy = lp(MC.jy, 0, Math.min(1, dt * 10));
         } else if ((OPT.mctrl | 0) === 1) {
           // MOUSE AIM INSTRUCTOR: unproject cursor ray -> smooth bank & pitch onto aim circle
-          const ndcX = (MC.x / Math.max(1, CW_)) * 2 - 1;
-          const ndcY = -(MC.y / Math.max(1, CH_)) * 2 + 1;
-          MC.aimV.set(ndcX, ndcY, 0.5).unproject(C).sub(C.position).normalize();
+          if (aimCaptured()) {
+            aimClamp(.15);
+            MC.aimV.copy(MC.aim);
+          } else {
+            const ndcX = (MC.x / Math.max(1, CW_)) * 2 - 1;
+            const ndcY = -(MC.y / Math.max(1, CH_)) * 2 + 1;
+            MC.aimV.set(ndcX, ndcY, 0.5).unproject(C).sub(C.position).normalize();
+          }
 
+          // INSTRUCTOR (v1.7): body-frame "roll the aim into the lift line, then pull", blended into
+          // "wings level + small nudges" near the aim. The old one banked by the world-horizontal error,
+          // which oscillated (bank swinging 10° <-> 110°) in climbs and big turns and never settled.
           const lx = MC.aimV.dot(P.r);
           const ly = MC.aimV.dot(P.u);
           const lz = MC.aimV.dot(P.f);
-          const err = Math.hypot(lx, ly);
-
-          // World-horizontal right vector relative to aircraft heading for smooth bank-to-turn
-          MC.hRight.set(-P.f.z, 0, P.f.x);
-          if (MC.hRight.lengthSq() < 1e-4) MC.hRight.copy(P.r).setY(0);
-          MC.hRight.normalize();
-          const sideErr = MC.aimV.dot(MC.hRight);
-
-          let rollCmd = 0, pitchCmd = 0;
-          if (err < 0.015 && lz > 0.9) {
-            // Centered: gently auto-level wings & hold nose steady
-            rollCmd = cl(P.r.y * 1.4, -0.45, 0.45);
-            pitchCmd = cl(ly * 2.8, -0.3, 0.3);
-          } else {
-            // Bank smoothly toward turn direction, pull pitch onto the aim circle
-            const wantBank = cl(sideErr * 3.0, -1.35, 1.35);
-            const curBank = Math.atan2(-P.r.y, P.u.y);
-            let bankErr = wantBank - curBank;
-            while (bankErr > PI) bankErr -= PI * 2;
-            while (bankErr < -PI) bankErr += PI * 2;
-            rollCmd = cl(bankErr * 1.35, -1, 1);
-            pitchCmd = cl(ly * 3.8 + (lz < 0.25 ? 0.65 : 0), -0.85, 1.0);
-          }
+          const err = Math.acos(cl(lz, -1, 1));                        // radians off the nose
+          // roll rate (for damping), from how P.r turned about the nose since last frame
+          if (!MC.pr) MC.pr = P.r.clone();
+          const rRate = dt > 0 ? Math.asin(cl(MC.tmp.crossVectors(MC.pr, P.r).dot(P.f), -1, 1)) / dt : 0;
+          MC.pr.copy(P.r);
+          const b = cl((err - 0.05) / 0.16, 0, 1);                      // 0 near the aim (~3°), 1 beyond ~12°
+          // far: roll so the aim sits straight "above" the canopy (into the lift line), pull once lined up
+          const rollTo = Math.atan2(lx, ly);                            // + = roll right
+          const farRoll = cl(rollTo * 1.7, -1, 1);
+          const farPitch = cl(err * 3, 0, 1) * Math.max(0, Math.cos(rollTo)) + (lz < 0.2 ? 0.35 : 0);
+          // near: level the wings, bank a little toward a side error, pitch straight onto the aim
+          const nearRoll = cl(P.r.y * 1.4 + lx * 7, -0.6, 0.6);
+          const nearPitch = cl(ly * 6, -0.6, 0.8);
+          const rollCmd = cl(lp(nearRoll, farRoll, b) - rRate * 0.12, -1, 1);
+          let pitchCmd = cl(lp(nearPitch, farPitch, b), -0.85, 1.0);
+          // stall protection: ease the pull as the wing nears the stall (P.sf), like a real instructor
+          if (pitchCmd > 0 && (P.sf || 0) > 0.12) pitchCmd *= 1 - cl(((P.sf || 0) - 0.12) / 0.3, 0, 0.75);
           const sm = Math.min(1, dt * 11);
           MC.jx = lp(MC.jx, rollCmd, sm);
           MC.jy = lp(MC.jy, pitchCmd, sm);
@@ -1340,7 +1485,14 @@
         jx = 0; jy = 0;
         if (MC.lmb) { MC.lmb = 0; keys.Gun = 0; }
       }
-      return _uM.apply(this, arguments);
+      const res = _uM.apply(this, arguments);
+      if (OPT.rrail && P) {
+        if (P.rl && P.rl.length) P.rl.length = 0;
+        if (!wasSvcd && P.svcd && pp && pp.ld) {
+          try { peSyncAmmoToStations(); peApplyVisibility(); } catch (e) {}
+        }
+      }
+      return res;
     };
   }
 
@@ -1359,7 +1511,15 @@
           MC.projV.copy(P.p).addScaledVector(P.f, 600).project(C);
           const nx = (MC.projV.x * 0.5 + 0.5) * CW_;
           const ny = (-MC.projV.y * 0.5 + 0.5) * CH_;
-          const mx = MC.x, my = MC.y;
+          let mx = MC.x, my = MC.y;
+          if (aimCaptured()) {
+            // captured: the circle sits where the world aim direction lands on screen (kept on screen)
+            MC.tmp.copy(P.p).addScaledVector(MC.aim, 600).project(C);
+            const bh = MC.tmp.z > 1 ? -1 : 1;
+            mx = cl((MC.tmp.x * bh * 0.5 + 0.5) * CW_, 20 * UF, CW_ - 20 * UF);
+            my = cl((-MC.tmp.y * bh * 0.5 + 0.5) * CH_, 20 * UF, CH_ - 20 * UF);
+          }
+          MC.sx = mx; MC.sy = my;
 
           // Subtle dashed guide line from nose to mouse aim circle when turning
           if (MC.projV.z < 1 && Math.hypot(mx - nx, my - ny) > 22 * UF) {
@@ -1415,8 +1575,19 @@
         // Compact bottom hint
         const hint = (m === 1 ? 'MOUSE AIM' : 'VIRTUAL STICK') + '  ·  LMB GUN  ·  WHEEL THR  ·  X MSL  ·  MIDDLE-CLICK LOCK  ·  RIGHT-DRAG LOOK';
         tx(hint, CW_ * 0.5, CH_ - SA.b - (rcur ? 94 : 26) * UF, 'rgba(116, 255, 184, 0.85)', 'center', 8);
+        if (m === 1 && !document.pointerLockElement && document.body.classList.contains('desk'))
+          tx('CLICK TO CAPTURE THE MOUSE  ·  ESC GIVES IT BACK', CW_ * 0.5, CH_ - SA.b - (rcur ? 108 : 40) * UF, Math.sin(rt * 5) > 0 ? '#ffe45e' : 'rgba(255, 228, 94, 0.6)', 'center', 9);
         U.restore();
       } catch (e) {}
+    };
+  }
+
+  // MIDDLE-CLICK lock while the mouse is captured: the cursor is frozen, so lock what is under the aim circle
+  if (typeof window.__alk === 'function') {
+    const _alk = window.__alk;
+    window.__alk = function (ev) {
+      if (aimCaptured() && ev) ev = { button: ev.button, clientX: MC.sx || CW_ / 2, clientY: MC.sy || CH_ / 2, preventDefault() {}, stopPropagation() {} };
+      return _alk.call(this, ev);
     };
   }
 
@@ -1499,17 +1670,18 @@
   const hzOn = () => (OPT.camh | 0) === 1 && st === 1 && P && !P.dead && !P.gone && OPT.view !== 1
     && !(typeof VEHM !== 'undefined' && VEHM) && !(typeof CIN !== 'undefined' && CIN);
   function hzStep(dt) {
-    const f = P.f;
+    // MOUSE AIM with a captured mouse: the camera looks along the aim (snappy), not the nose
+    const fa = !!(window.__peAimCam && window.__peAimCam()), f = fa ? MC.aim : P.f;
     if (!HZ.init || !(dt > 0) || dt > .5) { HZ.d.copy(f); HZ.yaw = Math.atan2(f.x, f.z); HZ.pitch = Math.max(-1.25, Math.min(1.25, Math.asin(Math.max(-1, Math.min(1, f.y))))); HZ.init = 1; }
-    HZ.d.lerp(f, 1 - Math.exp(-5 * dt)).normalize();
+    HZ.d.lerp(f, 1 - Math.exp(-(fa ? 16 : 5) * dt)).normalize();
     const h = Math.hypot(HZ.d.x, HZ.d.z);
     const pT = Math.max(-1.25, Math.min(1.25, Math.atan2(HZ.d.y, h)));       // cap ~72 deg
     if (h > .12) {                                                             // near vertical: hold heading
       let dy = Math.atan2(HZ.d.x, HZ.d.z) - HZ.yaw;
       while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
-      HZ.yaw += Math.sign(dy) * Math.min(Math.abs(dy), (1.5 + 2 * Math.abs(dy)) * dt);   // smooth swing over the top
+      HZ.yaw += Math.sign(dy) * Math.min(Math.abs(dy), (fa ? 6 + 6 * Math.abs(dy) : 1.5 + 2 * Math.abs(dy)) * dt);   // smooth swing over the top
     }
-    HZ.pitch += (pT - HZ.pitch) * Math.min(1, dt * 8);
+    HZ.pitch += (pT - HZ.pitch) * Math.min(1, dt * (fa ? 16 : 8));
     const cp = Math.cos(HZ.pitch);
     HZ.fw.set(Math.sin(HZ.yaw) * cp, Math.sin(HZ.pitch), Math.cos(HZ.yaw) * cp);
     HZ.rt.crossVectors(HZ.fw, HZ.Y).normalize();
@@ -1572,7 +1744,12 @@
         {
           l: 'MOUSE CONTROL',
           k: 'mctrl',
-          d: 'OFF: keep current controls. MOUSE AIM: steer by pointing the mouse cursor (left button guns, wheel throttle, X missile, middle-click lock, hold right button to look around). VIRTUAL STICK: mouse acts as analog stick.'
+          d: 'OFF: keep current controls. MOUSE AIM: click once in flight to capture the mouse (ESC gives it back), then move the mouse to swing the aim circle and the jet flies to it; there is no screen edge, keep moving to keep turning. Left button guns, wheel throttle, X missile, middle-click lock, hold right button to look around. VIRTUAL STICK: mouse acts as analog stick.'
+        },
+        {
+          l: 'MOUSE AIM SPEED',
+          k: 'msens',
+          d: 'How far the MOUSE AIM circle swings per inch of mouse movement. Slower is steadier for gunnery, faster turns with less arm movement.'
         }
       );
     }
@@ -1581,10 +1758,11 @@
   }
 
   window.ASKIIES_PLANES = {
-    version: '1.6.0',
+    version: '1.7.0',
     setMode: m => { OPT.pmode = m | 0; syncModeUniforms(); save(); },
     getMode: () => OPT.pmode | 0,
     setMouseMode: m => { OPT.mctrl = m | 0; save(); },
+    aim: () => ({ captured: aimCaptured(), dir: MC.aim.clone(), screen: [MC.sx, MC.sy] }),
     setRailStores: on => { OPT.rrail = on ? 1 : 0; save(); },
     upgradeJet: upgradeJetVisuals
   };
