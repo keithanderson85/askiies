@@ -39,7 +39,7 @@
   // the bug reporter (mp-client.js) in the UPDATE LOG of the current version
   try {
     const n = ULOG[0] && ULOG[0].notes;
-    if (Array.isArray(n) && !n.some(s => /^REPORT A BUG/.test(s))) n.unshift('REPORT A BUG: found something broken? Press F8 any time (even mid-flight), use the REPORT A BUG button on the hangar screens and the pause screen, or INFO ▸ REPORT A BUG. Your report goes straight to the developers with a screenshot, and signed-in pilots can see when it gets fixed.');
+    if (Array.isArray(n) && !n.some(s => /^REPORT A BUG/.test(s))) n.unshift('REPORT A BUG: found something broken? Mid-flight, press F8: it saves a screenshot and what was happening without stopping your game, and the bug button asks for the details when you pause or land. In the menus, use the REPORT A BUG button, F8, or INFO ▸ REPORT A BUG. Reports go straight to the developers, and signed-in pilots can see when theirs gets fixed.');
   } catch (e) {}
   // HUD text, toasts and text-box hints are drawn from string literals inside the game: rewrite on the way out
   try { const _tx = tx; tx = function (s) { if (quick(s)) arguments[0] = fix(s); return _tx.apply(this, arguments); }; } catch (e) {}   // eslint-disable-line no-global-assign
@@ -101,7 +101,7 @@
       // bug reports (mp-client.js): F8 opens the same box anywhere, the pause screen has a button too
       if (!PAGES.minfo.rows.some(r => r && r._bug)) PAGES.minfo.rows.push({ _bug: 1, l: 'REPORT A BUG',
         a: () => { try { window.ASKIIES_MP.bug(); } catch (e) {} },
-        d: 'Something broken or weird? Tell us and it goes straight to the bug list. F8 opens this anywhere, even mid-flight.' });
+        d: 'Something broken or weird? Tell us and it goes straight to the bug list. Mid-flight, F8 saves a snapshot without stopping the game.' });
       try { MENUG.minfo.d = 'Field guide, archive, update log, achievements and bug reports.'; } catch (e) {}
     }
 

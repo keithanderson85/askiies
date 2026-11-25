@@ -597,7 +597,7 @@ function renderBoard() {
 function card(b) {
   const age = ago(b.ts);
   return `<div class="bcard" draggable="true" tabindex="0" data-id="${b.id}">
-    <div class="bm"><span class="id">#${b.id}</span>${b.priority !== 'normal' ? `<span class="tag p-${b.priority}">${b.priority}</span>` : ''}<span class="tag">${esc(AREAS[b.kind] || b.kind)}</span>${b.rel ? `<span class="tag acc">${esc(b.rel)}</span>` : ''}${b.status === 'wontfix' || b.status === 'notbug' ? `<span class="tag">${BST[b.status]}</span>` : ''}</div>
+    <div class="bm"><span class="id">#${b.id}</span>${b.priority !== 'normal' ? `<span class="tag p-${b.priority}">${b.priority}</span>` : ''}<span class="tag">${esc(AREAS[b.kind] || b.kind)}</span>${b.rel ? `<span class="tag acc">${esc(b.rel)}</span>` : ''}${b.status === 'wontfix' || b.status === 'notbug' ? `<span class="tag">${BST[b.status]}</span>` : ''}${b.draft ? '<span class="tag warn" title="The player pressed F8 mid-game and has not added details yet">F8 snapshot</span>' : ''}</div>
     <div class="bt">${esc(b.title)}</div>
     <div class="bm"><span>${esc(b.who || 'anonymous')}</span><span>· ${esc(age)}</span>${b.hasShot ? '<span title="has a screenshot">· 📷</span>' : ''}${b.links ? '<span title="linked on GitHub">· 🔗</span>' : ''}${b.ctx && b.ctx.errors && b.ctx.errors.length ? `<span class="p-high" title="browser errors attached">· ${b.ctx.errors.length} err</span>` : ''}</div>
   </div>`;
@@ -628,6 +628,7 @@ async function openBug(id) {
   $('bugDlgIn').innerHTML = `
     <div class="tools" style="margin:0"><span class="id mono">#${b.id}</span><span class="tag">${esc(AREAS[b.kind] || b.kind)}</span><span class="sub">from ${esc(b.who || 'anonymous')} · ${esc(when(b.ts))} · game v${esc(b.ver || '?')}${b.closed ? ' · closed ' + esc(when(b.closed)) : ''}</span><span class="spacer"></span><button class="btn" type="button" data-x>Close</button></div>
     <h3>${esc(b.title)}</h3>
+    ${b.draft ? '<p class="sub">F8 snapshot: the player pressed F8 mid-game and has not written the details yet. The screenshot and game state show the moment.</p>' : ''}
     <div class="body">${esc(b.body || '(no description)')}</div>
     <div class="form2">
       <label>Status<select id="fSt">${Object.entries(BST).map(([k, l]) => `<option value="${k}"${k === b.status ? ' selected' : ''}>${l}</option>`).join('')}</select></label>

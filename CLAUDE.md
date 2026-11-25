@@ -19,6 +19,8 @@ docker exec askiies-mp bugs release <release>      # release notes for everythin
 docker exec askiies-mp bugs list all        # everything; statuses: open, progress, fixed, wontfix, notbug
 ```
 
+- Bugs marked `[F8 snapshot, no details yet]` were saved mid-game with F8 (screenshot + game state at that
+  moment); the player may add the title and description later. They are still worth reading.
 - The note is shown to the player who reported the bug, so write it in plain words for them.
 - Put the bug number in the commit message (`Fix bug #12: ...`) and link the commit with `--link`.
 - Errors in `show` give `file:line:col`; `ASKIIES.html` is one huge line-wrapped file, so search for the

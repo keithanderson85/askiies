@@ -33,7 +33,7 @@ for (let i = 0; i < argv.length; i++) {
 }
 const [cmd = 'list', a1, ...rest] = pos;
 
-function all() { return db.prepare('SELECT id, ts, who, kind, title, body, ver, status, priority, rel, links, note, updated, closed, shot IS NOT NULL AS hasShot, ctx FROM bugs ORDER BY id').all(); }
+function all() { return db.prepare('SELECT id, ts, who, kind, title, body, ver, status, priority, rel, links, note, updated, closed, draft, shot IS NOT NULL AS hasShot, ctx FROM bugs ORDER BY id').all(); }
 function rows(which) {
   const w = which || 'active';
   return all().filter(b => w === 'all' || (w === 'active' && !CLOSED.includes(b.status)) || (w === 'closed' && CLOSED.includes(b.status)) || b.status === w)
@@ -51,6 +51,7 @@ function ctxText(c) {
 function detail(b) {
   return [
     `## #${b.id} · ${b.title}`,
+    b.draft ? '- **F8 snapshot:** the player pressed F8 mid-game and has not written the details yet; the screenshot and game state show the moment.' : null,
     `- **Status:** ${STATUS[b.status] || b.status}${b.closed ? ' (closed ' + day(b.closed) + ')' : ''} · **Priority:** ${b.priority} · **Area:** ${b.kind}`,
     `- **Release:** ${b.rel || '-'} · **Game version when reported:** ${b.ver || '?'} · **From:** ${b.who || 'anonymous'} · **Reported:** ${day(b.ts)}`,
     b.links ? `- **Links:** ${b.links.split('\n').join(' · ')}` : null,
@@ -60,7 +61,7 @@ function detail(b) {
   ].filter(x => x != null).join('\n');
 }
 function line(b) {
-  return `#${String(b.id).padEnd(4)} ${(STATUS[b.status] || b.status).padEnd(11)} ${b.priority.padEnd(8)} ${b.kind.padEnd(9)} ${day(b.ts).slice(0, 10)}  ${String(b.who || 'anon').padEnd(14)} ${b.title}${b.rel ? '  [' + b.rel + ']' : ''}${b.hasShot ? '  [shot]' : ''}`;
+  return `#${String(b.id).padEnd(4)} ${(STATUS[b.status] || b.status).padEnd(11)} ${b.priority.padEnd(8)} ${b.kind.padEnd(9)} ${day(b.ts).slice(0, 10)}  ${String(b.who || 'anon').padEnd(14)} ${b.title}${b.rel ? '  [' + b.rel + ']' : ''}${b.hasShot ? '  [shot]' : ''}${b.draft ? '  [F8 snapshot, no details yet]' : ''}`;
 }
 const STMAP = { open: 'open', reopen: 'open', todo: 'open', progress: 'progress', inprogress: 'progress', working: 'progress', doing: 'progress',
   fixed: 'fixed', done: 'fixed', wontfix: 'wontfix', notbug: 'notbug', notabug: 'notbug' };

@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.7.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.8.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -263,7 +263,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.7.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut, bug: () => showBug(), errors: () => ERRS.slice() };
+  window.ASKIIES_MP = { version: '1.8.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut, bug: () => showBug(), snapshot: () => quickBug(), pending: () => pendGet().map(p => ({ id: p.id, ts: p.ts, where: p.where, local: !!p.local })), errors: () => ERRS.slice() };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
@@ -329,7 +329,13 @@
   @keyframes ampPulse{50%{box-shadow:0 0 36px rgba(116,255,184,.6)}}
   #amp-bughint{position:fixed;z-index:99990;left:50%;top:max(72px,calc(env(safe-area-inset-top) + 64px));transform:translateX(-50%);pointer-events:none;max-width:92vw;text-align:center;
     font:12px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;color:#e8fff2;background:rgba(4,22,20,.78);border:1px solid rgba(116,255,184,.45);padding:6px 12px;transition:opacity .8s}
-  #amp-bughint.out{opacity:0}`;
+  #amp-bughint.out{opacity:0}
+  #amp-bugbtn.pend{color:#1a1200;background:#ffd36a;border-color:#ffe9a8;animation:ampPulse 1.6s ease-in-out infinite}
+  #amp-bugbtn.pend:hover{color:#000}
+  #amp-bugflash{position:fixed;z-index:99992;left:50%;top:max(72px,calc(env(safe-area-inset-top) + 64px));transform:translateX(-50%);pointer-events:none;max-width:92vw;text-align:center;
+    font:13px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;color:#1a1200;background:#ffd36a;border:1px solid #ffe9a8;padding:7px 14px;
+    box-shadow:0 0 18px rgba(255,211,106,.45);transition:opacity .8s}
+  #amp-bugflash.out{opacity:0}`;
   function addCss() { if (!document.getElementById('amp-css')) { const s = document.createElement('style'); s.id = 'amp-css'; s.textContent = CSS + CSS_BUG; document.head.appendChild(s); } }
 
   // ------------------------------------------------------------------ sign-in overlay
@@ -387,6 +393,7 @@
   const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   // Screenshot: drawn in the next animation frame, right after the game has drawn its own, so the
   // 3D canvas still holds the picture. Every visible canvas is stacked in page order.
+  // Gives { full (for the report), thumb (small, kept in this browser to show in the box later) }.
   function grabShot() {
     return new Promise(res => requestAnimationFrame(() => {
       try {
@@ -406,7 +413,8 @@
         let d = make(1100, 0.72);
         if (d.length > 390e3) d = make(800, 0.6);
         if (d.length > 390e3) d = make(640, 0.5);
-        res(d.length <= 390e3 && d.length > 2000 ? d : null);
+        if (!(d.length <= 390e3 && d.length > 2000)) return res(null);
+        res({ full: d, thumb: make(320, 0.6) });
       } catch (e) { res(null); }
     }));
   }
@@ -440,48 +448,116 @@
       errors: ERRS.slice(),
     };
   }
+
+  // ---- F8 snapshots: during play F8 never stops the game. It sends the screenshot + game state at once
+  // (a draft report on the server) and remembers it here; the player adds the details when they pause,
+  // land or are back in the hangar (the bug button then reads FINISH BUG REPORT). If the server can't be
+  // reached the whole snapshot is kept here and sent with the details.
+  const PEND = 'askiies-bug-pending';
+  function pendGet() {
+    try { const a = JSON.parse(localStorage.getItem(PEND) || '[]'); return Array.isArray(a) ? a.filter(p => p && Date.now() - p.ts < 14 * 864e5) : []; }
+    catch (e) { return []; }
+  }
+  let PCOUNT = pendGet().length;
+  function pendSet(a) {
+    a = a.slice(-5); PCOUNT = a.length;
+    try { localStorage.setItem(PEND, JSON.stringify(a)); }
+    catch (e) { for (const p of a) if (p.local) delete p.local.shot; try { localStorage.setItem(PEND, JSON.stringify(a)); } catch (x) {} }   // storage full: keep it without the big picture
+  }
+  const pendDrop = ts => pendSet(pendGet().filter(p => p.ts !== ts));
+  const inPlay = () => { const s = GG(() => st); return (s === 1 || s === 4) && !GG(() => MPP.on) && !GG(() => P.dead); };   // eslint-disable-line no-undef
+  function whereNow() {
+    if (GG(() => CA && CA.on)) return 'in an online battle';                                            // eslint-disable-line no-undef
+    const m = GG(() => MODE), v = GG(() => VEHM);                                                       // eslint-disable-line no-undef
+    return (v ? 'driving' : 'flying') + (m ? ' (' + String(m).toLowerCase() + ')' : '');
+  }
+  const agoTxt = t => { const s = (Date.now() - t) / 1000; return s < 60 ? 'just now' : s < 3600 ? Math.floor(s / 60) + ' min ago' : s < 86400 ? Math.floor(s / 3600) + ' h ago' : Math.floor(s / 86400) + ' days ago'; };
+  let lastQuick = 0, flash = null;
+  function flashMsg(t) {
+    addCss();
+    if (flash) flash.remove();
+    if (hint) { hint.remove(); hint = null; }                                                           // same spot as the take-off reminder
+    const f = flash = el(`<div id="amp-bugflash">${t}</div>`);
+    document.body.appendChild(f);
+    setTimeout(() => f.classList.add('out'), 2800);
+    setTimeout(() => { f.remove(); if (flash === f) flash = null; }, 3600);
+  }
+  async function quickBug() {
+    const now = Date.now();
+    if (now - lastQuick < 3000) return;                                                                 // one snapshot per 3 s
+    lastQuick = now;
+    const shots = await grabShot();
+    const ctx = bugCtx(); ctx.snapshot = true;
+    const p = { ts: now, where: whereNow(), thumb: shots ? shots.thumb : null };
+    GG(() => snd('ui'));                                                                                // eslint-disable-line no-undef
+    flashMsg('🐞 BUG SNAPSHOT SAVED · ADD THE DETAILS WHEN YOU PAUSE OR LAND');
+    try { const j = await call('bug', { draft: 1, ver: ctx.game, ctx, shot: shots ? shots.full : undefined }); p.id = j.id; p.key = j.key; }
+    catch (e) { p.local = { ver: ctx.game, ctx, shot: shots ? shots.full : undefined }; }
+    pendSet([...pendGet(), p]);
+  }
+
   function closeBug() { if (bov) { bov.remove(); bov = null; } uiChanged(); }
-  async function showBug() {
+  // the report box: finishes the oldest F8 snapshot first, or starts a new report (fresh = true)
+  async function showBug(fresh) {
     if (bov) return;
     if (!document.body) return;
     addCss();
     if (ov) closeLogin();
-    if (flyingNow() && !GG(() => CA && CA.on)) GG(() => pause());                                     // eslint-disable-line no-undef
-    const shotP = grabShot();                                                                           // before our box covers the screen
-    const ctx = bugCtx();
+    const pend = fresh ? [] : pendGet(), S = pend[0] || null;
+    if (!S && flyingNow() && !GG(() => CA && CA.on)) GG(() => pause());                               // eslint-disable-line no-undef
+    const shotP = S ? Promise.resolve(null) : grabShot();                                               // before our box covers the screen
+    const ctx = S ? null : bugCtx();
     if (document.pointerLockElement) try { document.exitPointerLock(); } catch (e) {}
     bov = el(`<div id="amp-bug"><form class="bx" autocomplete="off">
-      <h2>REPORT A BUG</h2>
-      <p>Tell us what went wrong. The game version, what you were doing and any errors are attached for you.</p>
+      <h2>${S ? 'FINISH YOUR BUG REPORT' + (pend.length > 1 ? ' · 1 OF ' + pend.length : '') : 'REPORT A BUG'}</h2>
+      <p>${S ? `You saved this snapshot ${agoTxt(S.ts)} while ${escH(S.where)}. Say what went wrong and send it.` : 'Tell us what went wrong. The game version, what you were doing and any errors are attached for you.'}</p>
+      ${S && S.thumb ? `<div class="pv"><img alt="your snapshot" src="${escH(S.thumb)}"></div>` : ''}
       <label>WHAT KIND?</label><select name="kind">${BUG_KINDS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
       <label>SHORT TITLE <span>(e.g. "jet spins when I fire a missile")</span></label><input name="title" maxlength="120" required>
       <label>WHAT HAPPENED? <span>what you did · what you expected · what happened instead</span></label><textarea name="body" maxlength="4000" rows="5"></textarea>
       ${me ? '' : '<label>YOUR NAME <span>(optional · sign in and you can see when it gets fixed)</span></label><input name="who" maxlength="14">'}
-      <label class="ck"><input type="checkbox" name="shot" checked> INCLUDE A SCREENSHOT <span class="sh">(taking it…)</span></label>
-      <div class="pv"></div>
+      ${S ? '' : '<label class="ck"><input type="checkbox" name="shot" checked> INCLUDE A SCREENSHOT <span class="sh">(taking it…)</span></label><div class="pv"></div>'}
       <div class="err"></div>
-      <div class="row"><button type="button" class="alt" data-k="x">CANCEL</button><button type="submit">SEND REPORT</button></div>
+      <div class="row">${S ? '<button type="button" class="alt" data-k="del">DISCARD</button><button type="button" class="alt" data-k="x">LATER</button>' : '<button type="button" class="alt" data-k="x">CANCEL</button>'}<button type="submit">SEND REPORT</button></div>
+      ${S ? '<div class="sw"><a data-k="new">Report something else instead</a></div>' : ''}
       <div class="mine"></div>
     </form></div>`);
     shield(bov);
     const f = bov.querySelector('form'), errEl = bov.querySelector('.err'), btn = f.querySelector('button[type=submit]');
     let shot = null;
-    shotP.then(d => {
-      shot = d; if (!bov) return;
-      const sh = bov.querySelector('.sh'), pv = bov.querySelector('.pv');
-      if (d) { sh.textContent = ''; pv.innerHTML = `<img alt="screenshot" src="${d}">`; }
-      else { sh.textContent = '(not available here)'; f.shot.checked = false; f.shot.disabled = true; }
+    if (!S) {
+      shotP.then(d => {
+        shot = d ? d.full : null; if (!bov) return;
+        const sh = bov.querySelector('.sh'), pv = bov.querySelector('.pv');
+        if (d) { sh.textContent = ''; pv.innerHTML = `<img alt="screenshot" src="${d.full}">`; }
+        else { sh.textContent = '(not available here)'; f.shot.checked = false; f.shot.disabled = true; }
+      });
+      f.shot.addEventListener('change', () => { const pv = bov && bov.querySelector('.pv'); if (pv) pv.style.display = f.shot.checked ? '' : 'none'; });
+    }
+    bov.addEventListener('click', e => {
+      const k = e.target && e.target.getAttribute('data-k');
+      if (k === 'x' || e.target === bov) closeBug();
+      else if (k === 'new') { closeBug(); showBug(true); }
+      else if (k === 'del' && S) {
+        if (S.id) call('bug/discard', { id: S.id, key: S.key }).catch(() => {});
+        pendDrop(S.ts); closeBug();
+        toast(PCOUNT ? 'SNAPSHOT DISCARDED · ' + PCOUNT + ' MORE TO FINISH' : 'SNAPSHOT DISCARDED', '#ffd36a');
+      }
     });
-    f.shot.addEventListener('change', () => { const pv = bov && bov.querySelector('.pv'); if (pv) pv.style.display = f.shot.checked ? '' : 'none'; });
-    bov.addEventListener('click', e => { const k = e.target && e.target.getAttribute('data-k'); if (k === 'x' || e.target === bov) closeBug(); });
     bov.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); closeBug(); } });
     f.addEventListener('submit', async e => {
       e.preventDefault(); errEl.textContent = ''; btn.disabled = true;
+      const det = { kind: f.kind.value, title: f.title.value, body: f.body.value, who: f.who ? f.who.value : undefined };
       try {
-        const j = await call('bug', { kind: f.kind.value, title: f.title.value, body: f.body.value, who: f.who ? f.who.value : undefined,
-          ver: ctx.game, ctx, shot: f.shot.checked ? shot : undefined });
+        let id;
+        if (S && S.id) {
+          try { id = (await call('bug/fill', Object.assign({ id: S.id, key: S.key }, det))).id; }
+          catch (x) { if (x.code === 'already_exists' || x.code === 'permission_denied') pendDrop(S.ts); throw x; }
+        } else if (S) id = (await call('bug', Object.assign({}, S.local || {}, det))).id;
+        else id = (await call('bug', Object.assign({ ver: ctx.game, ctx, shot: f.shot.checked ? shot : undefined }, det))).id;
+        if (S) pendDrop(S.ts);
         closeBug();
-        toast('BUG #' + j.id + ' SENT · THANK YOU');
+        toast('BUG #' + id + ' SENT · THANK YOU' + (PCOUNT ? ' · ' + PCOUNT + ' MORE SNAPSHOT' + (PCOUNT > 1 ? 'S' : '') + ' TO FINISH' : ''));
       } catch (x) {
         errEl.textContent = (x.code === 'unavailable' ? 'Server unreachable. Try again shortly.' : x.message || 'Failed').toUpperCase();
       } finally { btn.disabled = false; }
@@ -490,18 +566,22 @@
     uiChanged();
     setTimeout(() => { try { f.title.focus(); } catch (e) {} }, 30);
     if (me) call('bugs/mine').then(j => {
-      if (!bov || !j.bugs.length) return;
-      bov.querySelector('.mine').innerHTML = '<label>YOUR REPORTS</label>' + j.bugs.map(b =>
+      const done = (j.bugs || []).filter(b => !b.draft);
+      if (!bov || !done.length) return;
+      bov.querySelector('.mine').innerHTML = '<label>YOUR REPORTS</label>' + done.map(b =>
         `<div class="mb"><span class="st st-${escH(b.status)}">${BUG_ST[b.status] || escH(b.status)}</span> #${b.id} ${escH(b.title)}${b.rel && b.status === 'fixed' ? ' <span class="st st-fixed">· IN ' + escH(b.rel) + '</span>' : ''}${b.note && b.status !== 'open' ? `<div class="nt">${escH(b.note)}</div>` : ''}</div>`).join('');
     }).catch(() => {});
   }
-  // F8 opens it anywhere (not while typing in a text box)
+  // F8 (not while typing in a text box): during play a snapshot that doesn't stop the game,
+  // anywhere else (menus, pause, debriefing) the report box
   addEventListener('keydown', e => {
     if (e.key !== 'F8' || e.repeat) return;
     const a = document.activeElement;
     if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && !(bov && bov.contains(a))) return;
     e.preventDefault(); e.stopImmediatePropagation();
-    if (bov) closeBug(); else showBug();
+    if (bov) closeBug();
+    else if (inPlay()) quickBug();
+    else showBug();
   }, true);
   // ---- letting players know
   //  menus (hangar, every page): a REPORT A BUG button at the top, between the logo and the money
@@ -528,7 +608,7 @@
     if (n >= 3 || hint) return;
     ls.set(HINTS, String(n + 1));
     addCss();
-    hint = el(`<div id="amp-bughint">FOUND A BUG? ${TOUCH ? 'PAUSE (II) ▸ REPORT A BUG' : 'PRESS F8 ANY TIME'} · IT GOES STRAIGHT TO THE DEVELOPERS</div>`);
+    hint = el(`<div id="amp-bughint">${TOUCH ? 'FOUND A BUG? PAUSE (II) ▸ REPORT A BUG · IT GOES STRAIGHT TO THE DEVELOPERS' : 'FOUND A BUG? PRESS F8 TO SAVE A SNAPSHOT · YOUR GAME KEEPS GOING, ADD THE DETAILS LATER'}</div>`);
     document.body.appendChild(hint);
     setTimeout(() => { if (hint) hint.classList.add('out'); }, 6500);
     setTimeout(() => { if (hint) { hint.remove(); hint = null; } }, 7300);
@@ -539,19 +619,22 @@
     if (s !== 1 && hint) { hint.remove(); hint = null; }
     lastSt = s;
     const mode = bugBtnMode();
-    if (mode !== pmode) {
+    const key = mode && mode + ':' + PCOUNT;
+    if (key !== pmode) {
       if (pbtn) { pbtn.remove(); pbtn = null; }
       if (mode) {
         addCss();
-        pbtn = el(`<button id="amp-bugbtn" class="${mode}" type="button" title="Report a bug${TOUCH ? '' : ' (F8)'}">${BUGLBL}</button>`);
+        pbtn = el(PCOUNT
+          ? `<button id="amp-bugbtn" class="${mode} pend" type="button" title="Add the details to the bug snapshot you saved">🐞 FINISH BUG REPORT (${PCOUNT})</button>`
+          : `<button id="amp-bugbtn" class="${mode}" type="button" title="Report a bug${TOUCH ? '' : ' (F8)'}">${BUGLBL}</button>`);
         noGame(pbtn);
         pbtn.addEventListener('click', openFromButton);
         document.body.appendChild(pbtn);
       }
-      pmode = mode;
+      pmode = key;
     }
     if (mode === 'menu' && !callout && !ls.get(SEEN)) {
-      callout = el(`<div id="amp-bugnew"><b>NEW</b> Found something broken? Tap this button${TOUCH ? '' : ' or press <b>F8</b> any time, even mid-flight'}.
+      callout = el(`<div id="amp-bugnew"><b>NEW</b> Found something broken? Tap this button${TOUCH ? '' : '. Mid-flight, press <b>F8</b>: it saves a screenshot without stopping your game, and you add the details when you land'}.
         Your report goes straight to the developers with a screenshot, and you can see when it gets fixed.<button type="button">GOT IT</button></div>`);
       noGame(callout);
       callout.querySelector('button').addEventListener('click', () => dropCallout(true));
