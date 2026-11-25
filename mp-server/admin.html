@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>ASKIIES Admin</title>
+<style>
+:root {
+  --page: #f9f9f7; --surface: #fcfcfb; --surface-2: #f0efec; --line: #e2e1dc;
+  --ink: #0b0b0b; --ink-2: #52514e; --ink-3: #807e78;
+  --accent: #2a78d6; --accent-soft: #cde2fb;
+  --good: #0ca30c; --warn: #b07600; --bad: #d03b3b;
+  --mono: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #242423; --line: #333331;
+    --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8f8e86;
+    --accent: #3987e5; --accent-soft: #184f95;
+    --good: #0ca30c; --warn: #fab219; --bad: #e66767;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --page: #0d0d0d; --surface: #1a1a19; --surface-2: #242423; --line: #333331;
+  --ink: #f0efec; --ink-2: #c3c2b7; --ink-3: #8f8e86;
+  --accent: #3987e5; --accent-soft: #184f95;
+  --good: #0ca30c; --warn: #fab219; --bad: #e66767;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--page); color: var(--ink); font: 14px/1.45 var(--sans); }
+button, input, select { font: inherit; color: inherit; }
+.wrap { max-width: 1280px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+.logo { font: 700 18px var(--mono); letter-spacing: .12em; }
+.logo span { color: var(--accent); }
+.sub { color: var(--ink-3); font-size: 12px; }
+.spacer { flex: 1; }
+.btn { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+.btn:hover { border-color: var(--ink-3); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; }
+h2 { font: 600 13px var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 12px; }
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.tile .k { font-size: 12px; color: var(--ink-2); }
+.tile .v { font: 600 28px/1.15 var(--mono); margin-top: 4px; }
+.tile .n { font-size: 12px; color: var(--ink-3); margin-top: 2px; }
+.grid3 { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+.grid3 > *, .grid2 > * { min-width: 0; }
+@media (max-width: 900px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.chart { position: relative; }
+.chart svg { display: block; width: 100%; height: 150px; overflow: visible; }
+.chart .ax { fill: var(--ink-3); font: 10px var(--mono); }
+.chart .grid { stroke: var(--line); stroke-width: 1; }
+.chart .line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; }
+.chart .area { fill: var(--accent); opacity: .12; }
+.chart .bar { fill: var(--accent); }
+.chart .hit { fill: transparent; }
+.chart .hit:hover + .bar, .chart .bar.on { fill: var(--ink-2); }
+.chart .cross { stroke: var(--ink-3); stroke-width: 1; stroke-dasharray: 3 3; }
+.chart .dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.chart-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.chart-head .tot { font: 600 13px var(--mono); color: var(--ink-2); }
+#tip { position: fixed; pointer-events: none; background: var(--ink); color: var(--page); font: 12px var(--mono); padding: 5px 8px; border-radius: 5px; white-space: nowrap; display: none; z-index: 20; }
+.empty { color: var(--ink-3); font-size: 13px; padding: 8px 0; }
+.list { list-style: none; margin: 0; padding: 0; }
+.list li { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: baseline; padding: 6px 0; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.list li:last-child { border-bottom: 0; }
+.list .t { color: var(--ink-3); font: 12px var(--mono); white-space: nowrap; }
+.list .m { color: var(--ink-2); font-size: 12px; }
+.dot-on { width: 8px; height: 8px; border-radius: 50%; background: var(--good); display: inline-block; flex: none; align-self: center; }
+.tag { font: 11px var(--mono); padding: 1px 6px; border-radius: 4px; background: var(--surface-2); color: var(--ink-2); white-space: nowrap; }
+.tag.good { color: var(--good); } .tag.bad { color: var(--bad); } .tag.warn { color: var(--warn); } .tag.acc { color: var(--accent); }
+.tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+.tools input, .tools select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
+.tools input { flex: 1; min-width: 160px; }
+.tablewrap { overflow-x: auto; }
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th { text-align: left; font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
+th.num, td.num { text-align: right; }
+th .ar { color: var(--accent); }
+td { padding: 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+tr.pilot { cursor: pointer; }
+tr.pilot:hover td { background: var(--surface-2); }
+td .cs { color: var(--ink-3); font: 11px var(--mono); }
+td.mono, .mono { font-family: var(--mono); font-size: 12px; }
+tr.detail td { background: var(--surface-2); }
+.actions { display: flex; position: sticky; left: 0; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; font-size: 13px; }
+.kv b { font-weight: 500; color: var(--ink-2); }
+.notice { margin-top: 8px; padding: 8px 10px; border-radius: 6px; background: var(--surface); border: 1px solid var(--line); font-size: 13px; }
+.notice code { font: 600 15px var(--mono); color: var(--accent); user-select: all; }
+#login { max-width: 360px; margin: 12vh auto 0; }
+#login input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--page); margin: 8px 0 12px; }
+#login .err { color: var(--bad); font-size: 13px; min-height: 18px; }
+.hide { display: none !important; }
+.status { font: 12px var(--mono); color: var(--ink-3); }
+.status.bad { color: var(--bad); }
+</style>
+</head>
+<body>
+<div id="tip"></div>
+
+<form id="login" class="card hide" autocomplete="off">
+  <div class="logo">ASK<span>II</span>ES · ADMIN</div>
+  <p class="sub">Server dashboard. Enter the admin password from the server's <span class="mono">.env</span> file (ASKIIES_ADMIN_PASSWORD).</p>
+  <input id="pw" type="password" placeholder="Admin password" autocomplete="current-password" required>
+  <div class="err" id="loginErr"></div>
+  <button class="btn primary" type="submit">Sign in</button>
+</form>
+
+<div id="app" class="wrap hide">
+  <header>
+    <div>
+      <div class="logo">ASK<span>II</span>ES · ADMIN</div>
+      <div class="sub" id="srv"></div>
+    </div>
+    <div class="spacer"></div>
+    <span class="status" id="status"></span>
+    <button class="btn" id="refresh" type="button">Refresh</button>
+    <button class="btn" id="theme" type="button" title="Light / dark">◐</button>
+    <button class="btn" id="out" type="button">Sign out</button>
+  </header>
+
+  <section class="tiles" id="tiles"></section>
+
+  <section class="grid3">
+    <div class="card"><div class="chart-head"><h2>Pilots online · last 24 hours</h2><span class="tot" id="onPeak"></span></div><div class="chart" id="cOnline"></div></div>
+    <div class="card"><div class="chart-head"><h2>New pilots · 30 days</h2><span class="tot" id="sgTot"></span></div><div class="chart" id="cSignups"></div></div>
+    <div class="card"><div class="chart-head"><h2>Visits · 30 days</h2><span class="tot" id="liTot"></span></div><div class="chart" id="cLogins"></div></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card"><h2>Online now</h2><ul class="list" id="onlineList"></ul></div>
+    <div class="card"><h2>Open rooms</h2><ul class="list" id="roomList"></ul></div>
+  </section>
+
+  <section class="card" style="margin-bottom:12px">
+    <h2>Pilots</h2>
+    <div class="tools">
+      <input id="q" type="search" placeholder="Search callsign…">
+      <select id="show">
+        <option value="all">All pilots</option>
+        <option value="online">Online now</option>
+        <option value="d1">Active last 24 h</option>
+        <option value="d7">Active last 7 days</option>
+        <option value="new7">Joined last 7 days</option>
+        <option value="idle30">Not seen for 30+ days</option>
+      </select>
+      <span class="sub" id="pCount"></span>
+    </div>
+    <div class="tablewrap"><table>
+      <thead><tr id="pHead"></tr></thead>
+      <tbody id="pBody"></tbody>
+    </table></div>
+  </section>
+
+  <section class="grid2">
+    <div class="card">
+      <h2>Activity</h2>
+      <div class="tools">
+        <select id="evKind">
+          <option value="">Everything</option>
+          <option value="register">New pilots</option>
+          <option value="visit">Visits</option>
+          <option value="login">Sign-ins</option>
+          <option value="login_fail">Failed sign-ins</option>
+          <option value="password">Password changes</option>
+          <option value="display">Name changes</option>
+          <option value="admin">Admin actions</option>
+        </select>
+      </div>
+      <ul class="list" id="evList"></ul>
+    </div>
+    <div class="card">
+      <h2>Server</h2>
+      <div class="kv" id="srvKv"></div>
+      <p class="sub" style="margin-top:14px">“net” tags are a scrambled code for the network a player used (never their address). The same tag on several pilots means they signed up from the same place. Sign-up is open to anyone, limited to <span id="lim"></span> new pilots per network per day.</p>
+    </div>
+  </section>
+</div>
+
+<script>
+'use strict';
+const API = location.pathname.replace(/\/admin\/?$/, '') + '/admin/api/';
+const $ = id => document.getElementById(id);
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const store = { get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { v == null ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (e) {} } };
+const pref = { get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch (e) {} } };
+let TOKEN = store.get('askiies-admin');
+let DATA = null, OPEN = null, NOTICE = {};
+let SORT = { k: 'last', dir: -1 };
+
+// ---------------------------------------------------------------- formatting
+const nf = new Intl.NumberFormat();
+const n = v => nf.format(v || 0);
+const bytes = b => b < 1024 ? b + ' B' : b < 1 << 20 ? (b / 1024).toFixed(1) + ' KB' : b < 1 << 30 ? (b / 1048576).toFixed(1) + ' MB' : (b / 1073741824).toFixed(2) + ' GB';
+const dur = ms => { const m = Math.round(ms / 60e3); if (m < 1) return '<1 min'; if (m < 60) return m + ' min'; const h = Math.floor(m / 60); if (h < 48) return h + ' h ' + (m % 60) + ' min'; return Math.floor(h / 24) + ' d ' + (h % 24) + ' h'; };
+const ago = t => { if (!t) return '—'; const s = (Date.now() - t) / 1000; if (s < 60) return 'just now'; if (s < 3600) return Math.floor(s / 60) + ' min ago'; if (s < 86400) return Math.floor(s / 3600) + ' h ago'; if (s < 86400 * 45) return Math.floor(s / 86400) + ' d ago'; return new Date(t).toLocaleDateString(); };
+const when = t => t ? new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const day = t => new Date(t).toLocaleDateString([], { month: 'short', day: 'numeric' });
+const roomName = r => /^lobby/i.test(r) ? 'Lobby' : r;
+const REC = { kil: 'kills' };
+
+// ---------------------------------------------------------------- API
+async function api(p, body) {
+  const r = await fetch(API + p, {
+    method: body ? 'POST' : 'GET',
+    headers: Object.assign({ 'Content-Type': 'application/json' }, TOKEN ? { Authorization: 'Bearer ' + TOKEN } : {}),
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (r.status === 401 && p !== 'login') { signedOut(); throw new Error('signed out'); }
+  if (!r.ok) throw new Error(j.message || ('error ' + r.status));
+  return j;
+}
+function signedOut(msg) {
+  TOKEN = null; store.set('askiies-admin', null); DATA = null;
+  $('app').classList.add('hide'); $('login').classList.remove('hide');
+  $('loginErr').textContent = msg || ''; $('pw').value = ''; $('pw').focus();
+}
+$('login').addEventListener('submit', async e => {
+  e.preventDefault(); $('loginErr').textContent = '';
+  try {
+    const j = await api('login', { password: $('pw').value });
+    TOKEN = j.token; store.set('askiies-admin', TOKEN);
+    $('login').classList.add('hide'); $('app').classList.remove('hide');
+    load();
+  } catch (err) { $('loginErr').textContent = err.message; }
+});
+$('out').onclick = async () => { try { await api('logout', {}); } catch (e) {} signedOut(); };
+$('refresh').onclick = () => load();
+$('theme').onclick = () => {
+  const cur = document.documentElement.dataset.theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+  const nx = cur === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = nx; pref.set('askiies-admin-theme', nx);
+};
+{ const t = pref.get('askiies-admin-theme'); if (t) document.documentElement.dataset.theme = t; }
+
+let busy = false;
+async function load() {
+  if (busy || !TOKEN) return; busy = true;
+  try {
+    DATA = await api('overview');
+    render();
+    $('status').className = 'status'; $('status').textContent = 'updated ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    if (TOKEN) { $('status').className = 'status bad'; $('status').textContent = 'could not reach the server: ' + e.message; }
+  } finally { busy = false; }
+}
+setInterval(() => { if (!document.hidden && TOKEN) load(); }, 15000);
+let rz; addEventListener('resize', () => { clearTimeout(rz); rz = setTimeout(() => { if (DATA) render(); }, 150); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && TOKEN) load(); });
+
+// ---------------------------------------------------------------- tooltip
+const tip = $('tip');
+function showTip(e, html) { tip.innerHTML = html; tip.style.display = 'block'; const w = tip.offsetWidth; let x = e.clientX + 12; if (x + w > innerWidth - 8) x = e.clientX - w - 12; tip.style.left = x + 'px'; tip.style.top = (e.clientY - 34) + 'px'; }
+function hideTip() { tip.style.display = 'none'; }
+
+// ---------------------------------------------------------------- charts (single series: the title names it)
+let W = 600; const H = 150, PL = 30, PR = 6, PT = 8, PB = 20;
+const fitW = el => { W = Math.max(220, Math.round(el.clientWidth || 600)); };
+function niceMax(v) { if (v <= 4) return 4; const p = Math.pow(10, Math.floor(Math.log10(v))); for (const m of [1, 2, 2.5, 5, 10]) if (m * p >= v) return m * p; return 10 * p; }
+function yAxis(max) {
+  let s = '';
+  for (let i = 0; i <= 2; i++) {
+    const v = max * i / 2, y = PT + (H - PT - PB) * (1 - i / 2);
+    s += `<line class="grid" x1="${PL}" x2="${W - PR}" y1="${y}" y2="${y}"/><text class="ax" x="${PL - 6}" y="${y + 3}" text-anchor="end">${Math.round(v)}</text>`;
+  }
+  return s;
+}
+function lineChart(el, pts, t0, t1) {
+  fitW(el);
+  // pts: [{t, u}] at 5-minute steps; gaps (server off) are drawn as zero
+  const step = 300000, vals = [];
+  const m = new Map(pts.map(p => [p.t, p.u]));
+  for (let t = Math.floor(t0 / step) * step; t <= t1; t += step) vals.push({ t, u: m.get(t) || 0 });
+  const max = niceMax(Math.max(1, ...vals.map(v => v.u)));
+  const x = i => PL + (W - PL - PR) * (vals.length < 2 ? 0 : i / (vals.length - 1));
+  const y = v => PT + (H - PT - PB) * (1 - v / max);
+  const d = vals.map((v, i) => (i ? 'L' : 'M') + x(i).toFixed(1) + ',' + y(v.u).toFixed(1)).join('');
+  let ticks = '';
+  for (let h = 0; h <= 24; h += 6) { const i = Math.round((vals.length - 1) * h / 24); ticks += `<text class="ax" x="${x(i)}" y="${H - 4}" text-anchor="${h === 0 ? 'start' : h === 24 ? 'end' : 'middle'}">${h === 24 ? 'now' : '-' + (24 - h) + 'h'}</text>`; }
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Pilots online over the last 24 hours">${yAxis(max)}
+    <path class="area" d="${d}L${x(vals.length - 1)},${y(0)}L${x(0)},${y(0)}Z"/><path class="line" d="${d}"/>
+    <line class="cross hide" y1="${PT}" y2="${H - PB}"/>${ticks}</svg>`;
+  const svg = el.firstChild, cross = svg.querySelector('.cross');
+  svg.onmousemove = e => {
+    const r = svg.getBoundingClientRect(), px = (e.clientX - r.left) / r.width * W;
+    const i = Math.max(0, Math.min(vals.length - 1, Math.round((px - PL) / (W - PL - PR) * (vals.length - 1))));
+    cross.setAttribute('x1', x(i)); cross.setAttribute('x2', x(i)); cross.classList.remove('hide');
+    showTip(e, `${new Date(vals[i].t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} · <b>${vals[i].u}</b> online`);
+  };
+  svg.onmouseleave = () => { cross.classList.add('hide'); hideTip(); };
+  return Math.max(...vals.map(v => v.u));
+}
+function dayBuckets(ts, days) {
+  const out = [], now = new Date();
+  const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1)).getTime();
+  for (let i = 0; i < days; i++) { const d = new Date(start); d.setDate(d.getDate() + i); out.push({ t: d.getTime(), n: 0 }); }
+  for (const t of ts) { if (t < start) continue; let i = out.length - 1; while (i > 0 && out[i].t > t) i--; out[i].n++; }
+  return out;
+}
+function barChart(el, buckets, label) {
+  fitW(el);
+  const max = niceMax(Math.max(1, ...buckets.map(b => b.n)));
+  const bw = (W - PL - PR) / buckets.length, gap = 2;
+  const y = v => PT + (H - PT - PB) * (1 - v / max);
+  let s = yAxis(max);
+  buckets.forEach((b, i) => {
+    const x0 = PL + i * bw + gap / 2, w = Math.max(1, bw - gap), top = y(b.n), base = y(0);
+    const h = base - top, r = Math.min(4, w / 2, h);
+    const bar = b.n ? `<path class="bar" d="M${x0},${base}V${top + r}Q${x0},${top} ${x0 + r},${top}H${x0 + w - r}Q${x0 + w},${top} ${x0 + w},${top + r}V${base}Z"/>` : '';
+    s += `<rect class="hit" data-i="${i}" x="${PL + i * bw}" y="${PT}" width="${bw}" height="${H - PT - PB}"/>${bar}`;
+  });
+  [0, buckets.length - 1].forEach((i, k) => { s += `<text class="ax" x="${PL + i * bw + (k ? bw : 0)}" y="${H - 4}" text-anchor="${k ? 'end' : 'start'}">${k ? 'today' : day(buckets[i].t)}</text>`; });
+  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)} per day, last 30 days">${s}</svg>`;
+  el.querySelectorAll('.hit').forEach(h => {
+    h.onmousemove = e => { const b = buckets[+h.dataset.i]; showTip(e, `${day(b.t)} · <b>${b.n}</b> ${esc(label)}`); };
+    h.onmouseleave = hideTip;
+  });
+  return buckets.reduce((a, b) => a + b.n, 0);
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  const D = DATA, T = D.totals, S = D.server;
+  $('srv').textContent = `server v${S.version} · up ${dur(D.now - S.started)} · registration open`;
+  $('lim').textContent = S.signupsPerNetDay;
+  const tile = (k, v, note) => `<div class="card tile"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${note || '&nbsp;'}</div></div>`;
+  $('tiles').innerHTML =
+    tile('Online now', n(T.online), T.conns !== T.online ? n(T.conns) + ' open tabs' : '') +
+    tile('Pilots', n(T.users), '+' + n(T.new1) + ' today · +' + n(T.new7) + ' this week') +
+    tile('Active today', n(T.act1), n(T.act7) + ' this week') +
+    tile('Rooms open', n(T.rooms), 'lobby, battles, workshop') +
+    tile('Cloud saves', bytes(T.docBytes), n(T.docs) + ' documents') +
+    tile('Friend links', n(T.friends), n(T.sessions) + ' signed-in devices');
+
+  const peak = lineChart($('cOnline'), D.charts.online24, D.now - 864e5, D.now);
+  $('onPeak').textContent = 'peak ' + peak;
+  $('sgTot').textContent = barChart($('cSignups'), dayBuckets(D.charts.signups, 30), 'new pilots') + ' total';
+  $('liTot').textContent = barChart($('cLogins'), dayBuckets(D.charts.visits, 30), 'visits') + ' total';
+
+  const on = D.users.filter(u => u.online).sort((a, b) => a.onlineSince - b.onlineSince);
+  $('onlineList').innerHTML = on.length ? on.map(u => `<li><span class="dot-on"></span><span>${esc(u.display)}</span>
+      <span class="m">${u.rooms.length ? u.rooms.map(r => esc(roomName(r))).join(', ') : 'menus'}</span><span class="spacer"></span><span class="t">${dur(D.now - u.onlineSince)}</span></li>`).join('')
+    : '<li class="empty">Nobody is online right now.</li>';
+  $('roomList').innerHTML = D.rooms.length ? D.rooms.sort((a, b) => b.peers.length - a.peers.length).map(r => `<li><span class="tag acc">${r.peers.length}</span>
+      <span class="mono">${esc(roomName(r.name))}</span><span class="m">${r.peers.map(p => esc(p.display)).join(', ')}</span></li>`).join('')
+    : '<li class="empty">No rooms open.</li>';
+
+  renderPilots(); renderEvents();
+  $('srvKv').innerHTML = [
+    ['Server version', 'v' + S.version], ['Node', S.node], ['Running since', when(S.started) + ' (' + dur(D.now - S.started) + ')'],
+    ['Memory', bytes(S.rss)], ['Database', bytes(S.dbBytes)], ['Signed-in devices', n(T.sessions)],
+  ].map(([k, v]) => `<b>${k}</b><span class="mono">${esc(v)}</span>`).join('');
+}
+
+const COLS = [
+  { k: 'display', l: 'Pilot' }, { k: 'last', l: 'Last seen' }, { k: 'created', l: 'Joined' },
+  { k: 'play', l: 'Time online', num: 1 }, { k: 'visits', l: 'Visits', num: 1 }, { k: 'save', l: 'Cloud save' },
+  { k: 'version', l: 'Game' }, { k: 'rec', l: 'Records' }, { k: 'bytes', l: 'Storage', num: 1 }, { k: 'friends', l: 'Friends', num: 1 },
+];
+function renderPilots() {
+  const D = DATA, q = $('q').value.trim().toLowerCase(), show = $('show').value, now = D.now;
+  let list = D.users.filter(u => !q || u.display.toLowerCase().includes(q) || u.callsign.toLowerCase().includes(q));
+  list = list.filter(u => show === 'all' || (show === 'online' && u.online) || (show === 'd1' && u.last > now - 864e5) ||
+    (show === 'd7' && u.last > now - 7 * 864e5) || (show === 'new7' && u.created > now - 7 * 864e5) || (show === 'idle30' && u.last < now - 30 * 864e5));
+  const val = (u, k) => k === 'rec' ? Object.values(u.records).reduce((a, r) => a + r.v, 0) : k === 'last' ? (u.online ? Infinity : u.last) : u[k];
+  list.sort((a, b) => { const x = val(a, SORT.k), y = val(b, SORT.k); return (typeof x === 'string' ? x.localeCompare(y) : (x || 0) - (y || 0)) * SORT.dir; });
+  $('pCount').textContent = list.length + ' of ' + D.users.length;
+  $('pHead').innerHTML = COLS.map(c => `<th class="${c.num ? 'num' : ''}" data-k="${c.k}">${c.l}${SORT.k === c.k ? ` <span class="ar">${SORT.dir > 0 ? '▲' : '▼'}</span>` : ''}</th>`).join('');
+  $('pHead').querySelectorAll('th').forEach(th => th.onclick = () => { const k = th.dataset.k; SORT = { k, dir: SORT.k === k ? -SORT.dir : (k === 'display' || k === 'version' ? 1 : -1) }; renderPilots(); });
+  let h = '';
+  for (const u of list) {
+    const recs = Object.entries(u.records).map(([k, r]) => `${esc(REC[k] || k)} ${n(r.v)}`).join(', ');
+    h += `<tr class="pilot" data-id="${esc(u.id)}">
+      <td>${u.online ? '<span class="dot-on"></span> ' : ''}${esc(u.display)}${u.display.toUpperCase() !== u.callsign ? `<div class="cs">login ${esc(u.callsign)}</div>` : ''}</td>
+      <td>${u.online ? '<span class="tag good">online</span>' : esc(ago(u.last))}</td>
+      <td>${esc(day(u.created))}</td>
+      <td class="num mono">${u.play ? dur(u.play) : '—'}</td>
+      <td class="num mono">${n(u.visits)}</td>
+      <td>${esc(ago(u.save))}</td>
+      <td class="mono">${u.version ? 'v' + esc(u.version) : '—'}</td>
+      <td>${recs || '—'}</td>
+      <td class="num mono">${bytes(u.bytes)}</td>
+      <td class="num mono">${n(u.friends)}</td></tr>`;
+    if (OPEN === u.id) h += detailRow(u);
+  }
+  $('pBody').innerHTML = h || `<tr><td colspan="${COLS.length}" class="empty">No pilots match.</td></tr>`;
+  $('pBody').querySelectorAll('tr.pilot').forEach(tr => tr.onclick = () => { OPEN = OPEN === tr.dataset.id ? null : tr.dataset.id; renderPilots(); });
+  $('pBody').querySelectorAll('[data-act]').forEach(b => b.onclick = e => { e.stopPropagation(); act(b.dataset.act, b.dataset.id); });
+}
+function detailRow(u) {
+  const recs = Object.entries(u.records).map(([k, r]) => `${esc(REC[k] || k)} ${n(r.v)}${r.ac ? ' (' + esc(r.ac) + ')' : ''}`).join('<br>') || '—';
+  const note = NOTICE[u.id] || '';
+  return `<tr class="detail"><td colspan="${COLS.length}">
+    <div class="kv">
+      <b>Login callsign</b><span class="mono">${esc(u.callsign)}</span>
+      <b>Shown in game as</b><span>${esc(u.display)}</span>
+      <b>Joined</b><span>${esc(when(u.created))}</span>
+      <b>Last seen</b><span>${u.online ? 'online now, ' + u.tabs + ' tab' + (u.tabs > 1 ? 's' : '') + ', in ' + (u.rooms.map(r => esc(roomName(r))).join(', ') || 'menus') : esc(when(u.last))}</span>
+      <b>Visits · sign-ins</b><span>${n(u.visits)} visits · ${n(u.logins)} password sign-ins</span>
+      <b>Signed-in devices</b><span>${n(u.sessions)}</span>
+      <b>Last cloud save</b><span>${esc(when(u.save))}</span>
+      <b>Records</b><span>${recs}</span>
+      <b>Account id</b><span class="mono">${esc(u.id)}</span>
+    </div>
+    <div class="actions">
+      <button class="btn" data-act="resetpw" data-id="${esc(u.id)}">Reset password</button>
+      <button class="btn" data-act="signout" data-id="${esc(u.id)}">Sign out everywhere</button>
+      <button class="btn" data-act="display" data-id="${esc(u.id)}">Change shown name</button>
+      <button class="btn danger" data-act="delete" data-id="${esc(u.id)}">Delete pilot…</button>
+    </div>
+    ${note ? `<div class="notice">${note}</div>` : ''}
+  </td></tr>`;
+}
+async function act(a, id) {
+  const u = DATA.users.find(x => x.id === id); if (!u) return;
+  try {
+    if (a === 'resetpw') {
+      if (!confirm(`Reset the password for ${u.display}?\n\nThey will be signed out everywhere and need the new password you get next.`)) return;
+      const j = await api('user', { id, action: 'resetpw' });
+      NOTICE[id] = `New password for <b>${esc(u.callsign)}</b>: <code>${esc(j.password)}</code> · give it to them; they can change it in game (ONLINE ▸ account).`;
+    } else if (a === 'signout') {
+      if (!confirm(`Sign ${u.display} out on every device?`)) return;
+      await api('user', { id, action: 'signout' });
+      NOTICE[id] = 'Signed out everywhere.';
+    } else if (a === 'display') {
+      const d = prompt(`New name shown in game for ${u.display} (max 14 characters):`, u.display);
+      if (d == null || !d.trim()) return;
+      const j = await api('user', { id, action: 'display', display: d });
+      NOTICE[id] = 'Now shown as <b>' + esc(j.display) + '</b>.';
+    } else if (a === 'delete') {
+      const c = prompt(`Delete ${u.display} for good?\n\nThis removes the account, cloud saves, leaderboard entry and friends. It cannot be undone.\n\nType the login callsign (${u.callsign}) to confirm:`);
+      if (c == null) return;
+      await api('user', { id, action: 'delete', confirm: c });
+      OPEN = null; delete NOTICE[id];
+    }
+  } catch (e) { NOTICE[id] = '<span style="color:var(--bad)">' + esc(e.message) + '</span>'; }
+  await load(); renderPilots();
+}
+
+const EV = {
+  register: ['new pilot', 'good'], visit: ['came online', ''], login: ['signed in', ''], login_fail: ['failed sign-in', 'warn'], password: ['changed password', ''],
+  display: ['changed name', ''], admin_login: ['admin signed in', 'acc'], admin_fail: ['wrong admin password', 'bad'],
+  admin_signout: ['admin: signed out', 'acc'], admin_resetpw: ['admin: reset password', 'acc'], admin_display: ['admin: renamed', 'acc'], admin_delete: ['admin: deleted pilot', 'bad'],
+};
+function renderEvents() {
+  const k = $('evKind').value;
+  const list = DATA.events.filter(e => !k || (k === 'admin' ? e.kind.startsWith('admin') : e.kind === k)).slice(0, 120);
+  $('evList').innerHTML = list.length ? list.map(e => { const [l, c] = EV[e.kind] || [e.kind, '']; return `<li><span class="t">${esc(when(e.ts))}</span><span class="tag ${c}">${esc(l)}</span>
+    <span>${esc(e.who || '')}</span><span class="m">${esc(e.info || '')}</span></li>`; }).join('') : '<li class="empty">Nothing yet. Activity is recorded from this server version on.</li>';
+}
+$('q').oninput = () => renderPilots();
+$('show').onchange = () => renderPilots();
+$('evKind').onchange = () => renderEvents();
+
+// ---------------------------------------------------------------- start
+if (TOKEN) { $('app').classList.remove('hide'); load(); } else signedOut();
+</script>
+</body>
+</html>

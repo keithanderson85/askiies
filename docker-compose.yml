@@ -12,8 +12,8 @@ services:
     build: ./mp-server
     container_name: askiies-mp
     environment:
-      # New pilots need this code to create an account. Set it in .env next to this file.
-      INVITE_CODE: ${ASKIIES_INVITE_CODE:-}
+      # Password for the admin page (/admin). Set it in .env next to this file; empty = admin page off.
+      ADMIN_PASSWORD: ${ASKIIES_ADMIN_PASSWORD:-}
     volumes:
       - askiies-mp-data:/data
     restart: unless-stopped

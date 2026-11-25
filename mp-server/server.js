@@ -5,17 +5,23 @@
 //
 //   HTTP  /api/register  /api/login  /api/logout  /api/me  /api/password  /api/db  /health
 //   WS    /ws            (presence rooms: lobby, battles, co-op workshop)
+//   ADMIN /admin         (server page, password = ADMIN_PASSWORD) + /admin/api/*
 //
 // Runs behind the askiies nginx container at /mp/ (nginx strips the prefix).
 
 const http = require('node:http');
+const fs = require('node:fs');
+const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { WebSocketServer } = require('ws');
 
+const VERSION = '1.2.0';
+const STARTED = Date.now();
 const PORT = +process.env.PORT || 8080;
 const DB_PATH = process.env.DB_PATH || '/data/askiies.db';
-const INVITE = String(process.env.INVITE_CODE || '').trim();
+const ADMIN_PW = String(process.env.ADMIN_PASSWORD || '').trim();
+const SIGNUPS_PER_NET_DAY = 5;    // registration is open to anyone; this stops one network making piles of accounts
 const SESSION_DAYS = 180;
 const MAX_DOC = 1 << 20;          // 1 MB per document (game saves are chunked at 180 KB)
 const MAX_LB_DOC = 64 << 10;      // leaderboard rows are small
@@ -25,7 +31,8 @@ const MAX_WS_MSG = 512 << 10;     // co-op workshop presence carries a whole jet
 const MAX_ROOMS_PER_CONN = 8;
 const MAX_PEERS_PER_ROOM = 64;
 
-if (!INVITE) console.warn('[mp] INVITE_CODE is not set: registration is CLOSED until it is.');
+if (ADMIN_PW && ADMIN_PW.length < 10) console.warn('[mp] ADMIN_PASSWORD is shorter than 10 characters: use a long one.');
+if (!ADMIN_PW) console.warn('[mp] ADMIN_PASSWORD is not set: the admin page is OFF.');
 
 // ---------------------------------------------------------------- database
 const db = new DatabaseSync(DB_PATH);
@@ -60,9 +67,30 @@ db.exec(`
     PRIMARY KEY (uid, fid)
   );
   CREATE INDEX IF NOT EXISTS friends_fid ON friends(fid);
+  -- v1.2: activity for the admin page (sign-ups, sign-ins, password changes, admin actions)
+  CREATE TABLE IF NOT EXISTS events (
+    ts INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    uid TEXT,
+    info TEXT
+  );
+  CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+  -- v1.2: players online, sampled once a minute
+  CREATE TABLE IF NOT EXISTS samples (
+    ts INTEGER PRIMARY KEY,
+    users INTEGER NOT NULL,
+    conns INTEGER NOT NULL
+  );
 `);
 // v1.1: display callsign (shown in game) separate from the login callsign
-if (!db.prepare('PRAGMA table_info(users)').all().some(c => c.name === 'display')) db.exec('ALTER TABLE users ADD COLUMN display TEXT');
+// v1.2: total time online (ms) and sign-in count
+{
+  const cols = db.prepare('PRAGMA table_info(users)').all().map(c => c.name);
+  if (!cols.includes('display')) db.exec('ALTER TABLE users ADD COLUMN display TEXT');
+  if (!cols.includes('play')) db.exec('ALTER TABLE users ADD COLUMN play INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('logins')) db.exec('ALTER TABLE users ADD COLUMN logins INTEGER NOT NULL DEFAULT 0');
+  if (!cols.includes('visits')) db.exec('ALTER TABLE users ADD COLUMN visits INTEGER NOT NULL DEFAULT 0');
+}
 const Q = {
   userByCs: db.prepare('SELECT * FROM users WHERE callsign = ?'),
   userById: db.prepare('SELECT id, callsign, display FROM users WHERE id = ?'),
@@ -88,8 +116,34 @@ const Q = {
   frDel: db.prepare('DELETE FROM friends WHERE uid = ? AND fid = ?'),
   userByDisp: db.prepare('SELECT id, callsign FROM users WHERE display = ? COLLATE NOCASE LIMIT 2'),
   quota: db.prepare('SELECT coalesce(sum(length(data)), 0) AS n FROM docs WHERE uid = ?'),
+  evIns: db.prepare('INSERT INTO events (ts, kind, uid, info) VALUES (?, ?, ?, ?)'),
+  evPrune: db.prepare('DELETE FROM events WHERE ts < ?'),
+  smpIns: db.prepare('INSERT OR REPLACE INTO samples (ts, users, conns) VALUES (?, ?, ?)'),
+  smpPrune: db.prepare('DELETE FROM samples WHERE ts < ?'),
+  userLogin: db.prepare('UPDATE users SET last = ?, logins = logins + 1 WHERE id = ?'),
+  userPlay: db.prepare('UPDATE users SET play = play + ?, last = ? WHERE id = ?'),
+  userVisit: db.prepare('UPDATE users SET last = ?, visits = visits + 1 WHERE id = ?'),
 };
-setInterval(() => { try { Q.sesExpire.run(Date.now() - SESSION_DAYS * 864e5) } catch (e) {} }, 3600e3).unref();
+setInterval(() => {
+  try {
+    const now = Date.now();
+    Q.sesExpire.run(now - SESSION_DAYS * 864e5);
+    Q.evPrune.run(now - 180 * 864e5);
+    Q.smpPrune.run(now - 60 * 864e5);
+  } catch (e) {}
+}, 3600e3).unref();
+
+// a short tag per network (salted hash of the IP, never the IP itself), so the admin page can
+// spot several accounts made from one place without storing anyone's address
+const NET_SALT = (() => {
+  const f = path.join(path.dirname(DB_PATH), 'net-salt');   // kept next to the database so tags stay the same after restarts
+  try { const s = fs.readFileSync(f); if (s.length >= 16) return s; } catch (e) {}
+  const s = crypto.randomBytes(32);
+  try { fs.writeFileSync(f, s, { mode: 0o600 }); } catch (e) {}
+  return s;
+})();
+const netTag = ip => crypto.createHmac('sha256', NET_SALT).update(String(ip)).digest('hex').slice(0, 6);
+function logEv(kind, uid, info) { try { Q.evIns.run(Date.now(), kind, uid || null, info == null ? null : String(info).slice(0, 200)); } catch (e) {} }
 
 // ---------------------------------------------------------------- auth helpers
 const sha = s => crypto.createHash('sha256').update(String(s)).digest('hex');
@@ -143,6 +197,16 @@ function failed(ip) {
   r.n++; tries.set(ip, r);
 }
 setInterval(() => { const cut = Date.now() - 10 * 60e3; for (const [k, r] of tries) if (r.t < cut) tries.delete(k); }, 60e3).unref();
+
+// Open registration: at most SIGNUPS_PER_NET_DAY new pilots per network per day
+const signups = new Map();   // ip -> [timestamps]
+function signupBlocked(ip) {
+  const cut = Date.now() - 864e5;
+  const a = (signups.get(ip) || []).filter(t => t > cut);
+  signups.set(ip, a);
+  return a.length >= SIGNUPS_PER_NET_DAY;
+}
+setInterval(() => { const cut = Date.now() - 864e5; for (const [k, a] of signups) if (!a.some(t => t > cut)) signups.delete(k); }, 3600e3).unref();
 
 // ---------------------------------------------------------------- document permissions
 // The game uses:  data/users/<uid>/savemeta, data/users/<uid>/save<N>   (private cloud save)
@@ -210,7 +274,9 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   const route = req.method + ' ' + url.pathname;
   try {
-    if (route === 'GET /health') return send(res, 200, { ok: true, online: conns.size, registration: !!INVITE });
+    if (route === 'GET /health') return send(res, 200, { ok: true, online: conns.size, registration: true });
+
+    if (url.pathname === '/admin' || url.pathname === '/admin/' || url.pathname.startsWith('/admin/api/')) return await adminRoute(req, res, url, route);
 
     if (route === 'POST /api/register' || route === 'POST /api/login') {
       const ip = clientIp(req);
@@ -218,21 +284,24 @@ const server = http.createServer(async (req, res) => {
       const b = await readBody(req);
       const cs = normCs(b.callsign), pw = String(b.password || '');
       if (route === 'POST /api/register') {
-        if (!INVITE) throw new HttpErr('permission_denied', 'registration is closed');
-        if (!sameSecret(String(b.invite || '').trim(), INVITE)) { failed(ip); throw new HttpErr('permission_denied', 'wrong invite code'); }
         if (!CS_RE.test(cs)) throw new HttpErr('invalid_argument', 'callsign: 2-14 letters, numbers, space, - or _');
         if (pw.length < 6 || pw.length > 200) throw new HttpErr('invalid_argument', 'password must be at least 6 characters');
         if (Q.userByCs.get(cs)) throw new HttpErr('already_exists', 'that callsign is taken');
+        if (signupBlocked(ip)) throw new HttpErr('rate_limited', 'too many new pilots from this network today, try again tomorrow');
         const id = 'u' + crypto.randomBytes(9).toString('hex');
         const now = Date.now();
         const disp = normDisp(b.display) || cs;
         Q.userIns.run(id, cs, await hashPw(pw), now, now, disp);
+        signups.get(ip).push(now);
+        Q.userLogin.run(now, id);
+        logEv('register', id, 'net ' + netTag(ip));
         console.log('[mp] new pilot', cs);
         return send(res, 200, { token: newSession(id), id, callsign: cs, display: disp });
       }
       const u = Q.userByCs.get(cs);
-      if (!u || !(await checkPw(pw, u.pw))) { failed(ip); throw new HttpErr('unauthenticated', 'wrong callsign or password'); }
-      Q.userSeen.run(Date.now(), u.id);
+      if (!u || !(await checkPw(pw, u.pw))) { failed(ip); logEv('login_fail', u ? u.id : null, (u ? '' : 'unknown callsign ' + cs.slice(0, 14) + ' · ') + 'net ' + netTag(ip)); throw new HttpErr('unauthenticated', 'wrong callsign or password'); }
+      Q.userLogin.run(Date.now(), u.id);
+      logEv('login', u.id, 'net ' + netTag(ip));
       return send(res, 200, { token: newSession(u.id), id: u.id, callsign: u.callsign, display: u.display || u.callsign });
     }
 
@@ -243,6 +312,7 @@ const server = http.createServer(async (req, res) => {
     if (route === 'POST /api/profile') {
       const d = normDisp((await readBody(req)).display);
       if (!d) throw new HttpErr('invalid_argument', 'display callsign cannot be empty');
+      if (d !== user.disp) logEv('display', user.id, user.disp + ' → ' + d);
       Q.userDisp.run(d, user.id);
       for (const c of conns) if (c.user.id === user.id) c.user.disp = d;
       return send(res, 200, { ok: true, display: d });
@@ -262,6 +332,7 @@ const server = http.createServer(async (req, res) => {
       if (pw.length < 6 || pw.length > 200) throw new HttpErr('invalid_argument', 'password must be at least 6 characters');
       Q.userPw.run(await hashPw(pw), user.id);
       Q.sesDelUser.run(user.id, user.th);   // sign out every other device
+      logEv('password', user.id, 'changed by the player');
       return send(res, 200, { ok: true });
     }
     if (route === 'POST /api/db') return send(res, 200, dbOp(user, await readBody(req)));
@@ -350,7 +421,9 @@ wss.on('connection', ws => {
       if (!u) return ws.close(4001, 'signed out');
       clearTimeout(authTimer);
       c.user = u; c.th = u.th; c.peer = 'p' + (++peerSeq).toString(36) + crypto.randomBytes(3).toString('hex');
+      c.since = Date.now();
       conns.add(c);
+      cameOnline(u.id);
       return ws.send(JSON.stringify({ t: 'hello', peer: c.peer, id: u.id, callsign: u.cs, display: u.disp }));
     }
     // token bucket: 40 msg/s sustained, 120 burst (game sends ~10-20/s)
@@ -383,10 +456,188 @@ wss.on('connection', ws => {
   ws.on('close', () => {
     clearTimeout(authTimer);
     for (const room of [...c.rooms.keys()]) leaveRoom(c, room);
-    conns.delete(c);
+    if (conns.delete(c)) wentOffline(c.user.id);
   });
   ws.on('error', () => {});
 });
+
+// time online per player: counted from their first open tab to their last closed one
+// A "visit" is a pilot coming online; a reload or a short drop (under 10 minutes) is the same visit.
+const onlineSince = new Map();   // uid -> { n: open connections, since }
+const offAt = new Map();         // uid -> when they last went offline
+function cameOnline(uid) {
+  const o = onlineSince.get(uid);
+  if (o) { o.n++; return; }
+  const now = Date.now();
+  onlineSince.set(uid, { n: 1, since: now });
+  if (now - (offAt.get(uid) || 0) > 10 * 60e3) { try { Q.userVisit.run(now, uid); } catch (e) {} logEv('visit', uid, null); }
+  offAt.delete(uid);
+}
+function wentOffline(uid) {
+  const o = onlineSince.get(uid); if (!o) return;
+  if (--o.n > 0) return;
+  onlineSince.delete(uid);
+  const now = Date.now();
+  offAt.set(uid, now);
+  try { Q.userPlay.run(now - o.since, now, uid); } catch (e) {}
+}
+setInterval(() => { const cut = Date.now() - 10 * 60e3; for (const [k, t] of offAt) if (t < cut) offAt.delete(k); }, 600e3).unref();
+function flushPlay() {   // on shutdown: bank the time of everyone still online
+  const now = Date.now();
+  for (const [uid, o] of onlineSince) { try { Q.userPlay.run(now - o.since, now, uid); } catch (e) {} o.since = now; }
+}
+
+// players online, once a minute (for the admin page's chart)
+setInterval(() => {
+  try { Q.smpIns.run(Math.floor(Date.now() / 60e3) * 60e3, onlineSince.size, conns.size); } catch (e) {}
+}, 60e3).unref();
+
+// ---------------------------------------------------------------- admin page + API
+// The page is served by this server at /admin (players reach it as /mp/admin through nginx).
+// One password (ADMIN_PASSWORD in .env) gives a 12-hour admin token kept only in memory.
+const ADMIN_HTML = path.join(__dirname, 'admin.html');
+const ADMIN_TTL = 12 * 3600e3;
+const adminTokens = new Map();   // sha(token) -> expiry
+setInterval(() => { const now = Date.now(); for (const [k, t] of adminTokens) if (t < now) adminTokens.delete(k); }, 600e3).unref();
+
+const A = {
+  users: db.prepare(`SELECT u.id, u.callsign, coalesce(u.display, u.callsign) AS display, u.created, u.last, u.play, u.logins, u.visits,
+      (SELECT coalesce(sum(length(d.data)), 0) FROM docs d WHERE d.uid = u.id) AS bytes,
+      (SELECT count(*) FROM friends f WHERE f.uid = u.id) AS friends,
+      (SELECT count(*) FROM sessions s WHERE s.uid = u.id) AS sessions
+    FROM users u ORDER BY u.last DESC`),
+  lb: db.prepare("SELECT path, data FROM docs WHERE path LIKE 'lb/%'"),
+  meta: db.prepare("SELECT uid, data FROM docs WHERE path LIKE 'data/users/%/savemeta'"),
+  events: db.prepare(`SELECT e.ts, e.kind, e.uid, e.info, coalesce(u.display, u.callsign) AS who
+    FROM events e LEFT JOIN users u ON u.id = e.uid ORDER BY e.ts DESC LIMIT 300`),
+  visitTs: db.prepare("SELECT ts FROM events WHERE kind = 'visit' AND ts >= ? ORDER BY ts"),
+  smp5: db.prepare('SELECT (ts / 300000) * 300000 AS t, max(users) AS u FROM samples WHERE ts >= ? GROUP BY ts / 300000 ORDER BY t'),
+  smpHr: db.prepare('SELECT (ts / 3600000) * 3600000 AS t, max(users) AS u FROM samples WHERE ts >= ? GROUP BY ts / 3600000 ORDER BY t'),
+  counts: db.prepare('SELECT (SELECT count(*) FROM docs) AS docs, (SELECT coalesce(sum(length(data)), 0) FROM docs) AS docBytes, (SELECT count(*) FROM sessions) AS sessions, (SELECT count(*) FROM friends) AS friends'),
+  delDocs: db.prepare("DELETE FROM docs WHERE uid = ?1 OR path = 'lb/' || ?1 OR substr(path, 1, length(?1) + 12) = 'data/users/' || ?1 || '/'"),
+  delFriends: db.prepare('DELETE FROM friends WHERE uid = ?1 OR fid = ?1'),
+  delSessions: db.prepare('DELETE FROM sessions WHERE uid = ?'),
+  delUser: db.prepare('DELETE FROM users WHERE id = ?'),
+  full: db.prepare('SELECT id, callsign, coalesce(display, callsign) AS display FROM users WHERE id = ?'),
+};
+const fileSize = f => { try { return fs.statSync(f).size; } catch (e) { return 0; } };
+const kickUser = (uid, why) => { for (const c of [...conns]) if (c.user.id === uid) try { c.ws.close(4001, why); } catch (e) {} };
+const tempPassword = () => { const w = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (const b of crypto.randomBytes(10)) s += w[b % w.length]; return s.slice(0, 5) + '-' + s.slice(5); };
+
+function adminOverview() {
+  const now = Date.now();
+  const lb = new Map(), meta = new Map();
+  for (const r of A.lb.all()) { try { lb.set(r.path.slice(3), JSON.parse(r.data)); } catch (e) {} }
+  for (const r of A.meta.all()) { try { meta.set(r.uid, JSON.parse(r.data)); } catch (e) {} }
+  const where = new Map();   // uid -> { rooms:Set, since }
+  for (const c of conns) {
+    const w = where.get(c.user.id) || { rooms: new Set(), since: c.since, tabs: 0 };
+    for (const r of c.rooms.keys()) w.rooms.add(r);
+    w.since = Math.min(w.since, c.since); w.tabs++;
+    where.set(c.user.id, w);
+  }
+  const users = A.users.all().map(u => {
+    const l = lb.get(u.id), m = meta.get(u.id), w = where.get(u.id), o = onlineSince.get(u.id);
+    const rec = {};
+    if (l && l.r && typeof l.r === 'object') for (const [k, v] of Object.entries(l.r)) if (v && typeof v === 'object' && typeof v.v === 'number') rec[k] = { v: v.v, ac: String(v.ac || '').slice(0, 24) };
+    return {
+      id: u.id, callsign: u.callsign, display: u.display, created: u.created,
+      last: o ? now : u.last, play: u.play + (o ? now - o.since : 0), logins: u.logins, visits: u.visits,
+      bytes: u.bytes, friends: u.friends, sessions: u.sessions,
+      online: !!w, tabs: w ? w.tabs : 0, rooms: w ? [...w.rooms] : [], onlineSince: w ? w.since : null,
+      save: m ? m.ts || null : null, version: String((m && m.v) || (l && l.v) || ''), records: rec,
+    };
+  });
+  const roomList = [...rooms_list()];
+  const c = A.counts.get();
+  const day = 864e5;
+  return {
+    now, server: {
+      version: VERSION, started: STARTED, node: process.version, rss: process.memoryUsage().rss,
+      dbBytes: fileSize(DB_PATH) + fileSize(DB_PATH + '-wal'), registration: 'open', signupsPerNetDay: SIGNUPS_PER_NET_DAY,
+    },
+    totals: {
+      users: users.length, online: onlineSince.size, conns: conns.size, rooms: roomList.length,
+      new1: users.filter(u => u.created > now - day).length, new7: users.filter(u => u.created > now - 7 * day).length,
+      act1: users.filter(u => u.last > now - day).length, act7: users.filter(u => u.last > now - 7 * day).length,
+      docs: c.docs, docBytes: c.docBytes, sessions: c.sessions, friends: c.friends,
+    },
+    users, rooms: roomList,
+    events: A.events.all(),
+    charts: {
+      online24: A.smp5.all(now - day),
+      online30: A.smpHr.all(now - 30 * day),
+      signups: users.map(u => u.created).filter(t => t > now - 30 * day).sort((a, b) => a - b),
+      visits: A.visitTs.all(now - 30 * day).map(r => r.ts),
+    },
+  };
+}
+function* rooms_list() {
+  for (const [name, m] of rooms) yield { name, peers: [...m.values()].map(c => ({ id: c.user.id, display: c.user.disp })) };
+}
+
+async function adminRoute(req, res, url, route) {
+  if (!ADMIN_PW) throw new HttpErr('not_found', 'the admin page is off (set ADMIN_PASSWORD)');
+  if (req.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) {
+    const html = fs.readFileSync(ADMIN_HTML);
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store', 'Content-Length': html.length,
+      'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer', 'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
+    });
+    return res.end(html);
+  }
+  const ip = clientIp(req);
+  if (route === 'POST /admin/api/login') {
+    if (limited(ip)) throw new HttpErr('rate_limited', 'too many attempts, wait 10 minutes');
+    const b = await readBody(req);
+    if (!sameSecret(String(b.password || ''), ADMIN_PW)) { failed(ip); logEv('admin_fail', null, 'net ' + netTag(ip)); throw new HttpErr('unauthenticated', 'wrong admin password'); }
+    const token = crypto.randomBytes(32).toString('base64url');
+    adminTokens.set(sha(token), Date.now() + ADMIN_TTL);
+    logEv('admin_login', null, 'net ' + netTag(ip));
+    return send(res, 200, { token, ttl: ADMIN_TTL });
+  }
+  const t = bearer(req), exp = t && adminTokens.get(sha(t));
+  if (!exp || exp < Date.now()) throw new HttpErr('unauthenticated', 'admin sign-in needed');
+  if (route === 'GET /admin/api/overview') return send(res, 200, adminOverview());
+  if (route === 'POST /admin/api/logout') { adminTokens.delete(sha(t)); return send(res, 200, { ok: true }); }
+  if (route === 'POST /admin/api/user') {
+    const b = await readBody(req);
+    const u = A.full.get(String(b.id || ''));
+    if (!u) throw new HttpErr('not_found', 'no such pilot');
+    if (b.action === 'signout') {
+      A.delSessions.run(u.id); kickUser(u.id, 'signed out');
+      logEv('admin_signout', u.id, 'signed out everywhere by admin');
+      return send(res, 200, { ok: true });
+    }
+    if (b.action === 'resetpw') {
+      const pw = tempPassword();
+      Q.userPw.run(await hashPw(pw), u.id);
+      A.delSessions.run(u.id); kickUser(u.id, 'signed out');
+      logEv('admin_resetpw', u.id, 'password reset by admin');
+      return send(res, 200, { ok: true, password: pw });
+    }
+    if (b.action === 'display') {
+      const d = normDisp(b.display);
+      if (!d) throw new HttpErr('invalid_argument', 'name cannot be empty');
+      Q.userDisp.run(d, u.id);
+      for (const c of conns) if (c.user.id === u.id) c.user.disp = d;
+      logEv('admin_display', u.id, u.display + ' → ' + d);
+      return send(res, 200, { ok: true, display: d });
+    }
+    if (b.action === 'delete') {
+      if (normCs(b.confirm) !== u.callsign) throw new HttpErr('invalid_argument', 'type the login callsign to confirm');
+      kickUser(u.id, 'account deleted');
+      db.exec('BEGIN');
+      try { A.delDocs.run(u.id); A.delFriends.run(u.id); A.delSessions.run(u.id); A.delUser.run(u.id); db.exec('COMMIT'); }
+      catch (e) { db.exec('ROLLBACK'); throw e; }
+      logEv('admin_delete', null, 'deleted ' + u.callsign + ' (' + u.display + ')');
+      return send(res, 200, { ok: true });
+    }
+    throw new HttpErr('invalid_argument', 'bad action');
+  }
+  throw new HttpErr('not_found');
+}
 
 // heartbeat: drop dead sockets so ghosts leave the lobby within ~30 s
 setInterval(() => {
@@ -396,5 +647,5 @@ setInterval(() => {
   }
 }, 15e3).unref();
 
-server.listen(PORT, () => console.log(`[mp] ASKIIES multiplayer server on :${PORT} (db ${DB_PATH}, registration ${INVITE ? 'open with invite code' : 'CLOSED'})`));
-for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { try { db.close(); } catch (e) {} process.exit(0); });
+server.listen(PORT, () => console.log(`[mp] ASKIIES multiplayer server v${VERSION} on :${PORT} (db ${DB_PATH}, registration open, admin page ${ADMIN_PW ? 'on' : 'OFF'})`));
+for (const sig of ['SIGTERM', 'SIGINT']) process.on(sig, () => { try { flushPlay(); db.close(); } catch (e) {} process.exit(0); });

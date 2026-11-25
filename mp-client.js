@@ -296,11 +296,10 @@
     const reg = mode === 'register';
     ov = el(`<div id="amp-ov"><form class="bx" autocomplete="on">
       <h2>${reg ? 'CREATE A PILOT' : 'SIGN IN'}</h2>
-      <p>${note || (reg ? 'Create your pilot. You need the invite code from whoever runs this server.' : 'Sign in to fly with friends and keep your jets, missiles and campaign in the cloud.')}</p>
+      <p>${note || (reg ? 'Create your pilot: pick a login callsign and a password you will remember.' : 'Sign in to fly with friends and keep your jets, missiles and campaign in the cloud.')}</p>
       <label>LOGIN CALLSIGN</label><input name="cs" maxlength="14" autocomplete="username" autocapitalize="characters" spellcheck="false" required>
       <label>PASSWORD</label><input name="pw" type="password" autocomplete="${reg ? 'new-password' : 'current-password'}" required>
       ${reg ? '<label>DISPLAY CALLSIGN <span style="color:#577">(what others see · optional, change any time)</span></label><input name="disp" maxlength="14" autocomplete="nickname" spellcheck="false">' : ''}
-      ${reg ? '<label>INVITE CODE</label><input name="inv" autocomplete="off" spellcheck="false" required>' : ''}
       <div class="err"></div>
       <div class="row"><button type="button" class="alt" data-k="off">PLAY OFFLINE</button><button type="submit">${reg ? 'CREATE PILOT' : 'SIGN IN'}</button></div>
       <div class="sw">${reg ? 'Already a pilot? <a data-k="login">Sign in</a>' : 'New here? <a data-k="reg">Create a pilot</a>'}</div>
@@ -318,7 +317,7 @@
       e.preventDefault(); errEl.textContent = ''; btn.disabled = true;
       try {
         const body = { callsign: f.cs.value, password: f.pw.value };
-        if (reg) { body.invite = f.inv.value; body.display = f.disp.value; }
+        if (reg) body.display = f.disp.value;
         const j = await call(reg ? 'register' : 'login', body);
         closeLogin(); signedIn(j);
         toast('ONLINE AS ' + (j.display || j.callsign));
@@ -728,7 +727,7 @@
         { l: 'RESTORE FROM CLOUD', a: async () => { if (!G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } try { const got = await cloudPull(1); if (got) cloudApply(); else toast('NO CLOUD SAVE YET', HY); } catch (e) { toast('RESTORE FAILED', HR); } }, d: 'Replace this device\'s progress with the copy saved to your account.' });
     } else {
       R.push({ l: 'SIGN IN', a: () => showLogin(), d: 'Sign in to keep your progress in the cloud and play online.' },
-        { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? You need the invite code from whoever runs this server.' });
+        { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? Make a pilot: just a callsign and a password.' });
     }
     for (const re of [/^EXPORT SAVE FILE/, /^IMPORT SAVE FILE/, /^COPY SAVE CODE/, /^PASTE SAVE CODE/, /^UNDO LAST IMPORT/]) { const r = svRow(re); if (r) R.push(r); }
     if (me) R.push({ l: 'SIGN OUT', a: () => { if (confirm('Sign out of ' + me.callsign + ' on this browser?')) signOut(); }, d: 'Sign out on this browser. Your progress stays saved to your account.' });
