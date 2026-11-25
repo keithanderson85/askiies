@@ -1238,14 +1238,9 @@
       MC.lmb = 1;
       keys.Gun = 1;
       e.stopImmediatePropagation();
-    } else if (e.button === 1) {
-      // Middle-click fires missile
-      au();
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      if (typeof fireMsl === 'function') fireMsl();
     }
-    // Right-click (button === 2) still passes through to ASKIIES's target lock (__alk)
+    // Middle-click = target lock (the game's __alk); right-button drag = look around (mp-client.js).
+    // Missiles stay on X / the missile key.
   }, true);
 
   addEventListener('pointerup', e => {
@@ -1279,7 +1274,7 @@
     update = function (dt) {
       if (OPT.rrail && P && P.rl && P.rl.length) P.rl.length = 0;
 
-      if (isMouseFlightOn() && js === null) {
+      if (isMouseFlightOn() && js === null && !window.__ampLook) {   // right-drag look-around pauses mouse steering
         if (!MC.init) { MC.x = CW_ * 0.5; MC.y = CH_ * 0.5; MC.init = 1; }
         const kbManual = !!(keys.ArrowLeft || keys.ArrowRight || keys.ArrowUp || keys.ArrowDown || keys.KeyA || keys.KeyD || keys.KeyW || keys.KeyS);
         if (kbManual) {
@@ -1418,7 +1413,7 @@
         }
 
         // Compact bottom hint
-        const hint = (m === 1 ? 'MOUSE AIM' : 'VIRTUAL STICK') + '  ·  LMB GUN  ·  WHEEL THR  ·  MMB/X MSL  ·  RMB LOCK';
+        const hint = (m === 1 ? 'MOUSE AIM' : 'VIRTUAL STICK') + '  ·  LMB GUN  ·  WHEEL THR  ·  X MSL  ·  MIDDLE-CLICK LOCK  ·  RIGHT-DRAG LOOK';
         tx(hint, CW_ * 0.5, CH_ - SA.b - (rcur ? 94 : 26) * UF, 'rgba(116, 255, 184, 0.85)', 'center', 8);
         U.restore();
       } catch (e) {}
@@ -1451,7 +1446,13 @@
     }
   } catch (e) {}
 
-  // ---------- 9b. CAMERA: sticky ENGAGE lock + CAMERA DISTANCE ----------
+  // ---------- 9b. CAMERA ----------
+  // The camera no longer frames / locks onto targets: always the plain chase view (the game's
+  // CAMERA = CLASSIC). The ENGAGE option is removed from OPTIONS (hangar-menu.js). Look around
+  // with the right mouse button instead (mp-client.js), or J/L/I/K.
+  OPT.cam = 1;
+  if (LISTS.cam) LISTS.cam = () => ['ENGAGE', 'CLASSIC'];
+  // (kept for anyone who turns ENGAGE back on in code) sticky ENGAGE lock + CAMERA DISTANCE
   // ENGAGE (OPTIONS > CAMERA) frames your jet and your target. In the game it follows the auto-target
   // (P.tg), which re-scores every frame by angle-off-nose, so an enemy swinging behind you lost the
   // camera to whoever was in front. It also dropped the framing inside 140 m, right in the knife fight.
@@ -1571,7 +1572,7 @@
         {
           l: 'MOUSE CONTROL',
           k: 'mctrl',
-          d: 'OFF: keep current controls. MOUSE AIM: steer by pointing the mouse cursor (LMB guns, Wheel throttle, MMB/X missile, RMB lock). VIRTUAL STICK: mouse acts as analog stick.'
+          d: 'OFF: keep current controls. MOUSE AIM: steer by pointing the mouse cursor (left button guns, wheel throttle, X missile, middle-click lock, hold right button to look around). VIRTUAL STICK: mouse acts as analog stick.'
         }
       );
     }
@@ -1580,7 +1581,7 @@
   }
 
   window.ASKIIES_PLANES = {
-    version: '1.5.0',
+    version: '1.6.0',
     setMode: m => { OPT.pmode = m | 0; syncModeUniforms(); save(); },
     getMode: () => OPT.pmode | 0,
     setMouseMode: m => { OPT.mctrl = m | 0; save(); },

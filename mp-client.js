@@ -21,6 +21,34 @@
     set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} }
   };
 
+  // ------------------------------------------------------------------ flight mouse buttons
+  // Registered here in <head> so it runs BEFORE the game's own right/middle-click guard (which
+  // swallows those buttons for everything registered after it).
+  //   RIGHT button, hold + move = look around the jet (drives the game's own camera-look stick);
+  //                               let go and the camera swings back behind the jet
+  //   MIDDLE click              = lock the target under the cursor / release on empty sky (the game's lock)
+  const LOOK = { on: 0, x0: 0, y0: 0 };
+  const GG = f => { try { return f(); } catch (e) { return undefined; } };
+  const flyingNow = () => GG(() => st) === 1 && !GG(() => CIN) && !GG(() => VEHM) && !!GG(() => P) && !GG(() => P.dead);
+  function lookEnd() { if (!LOOK.on) return; LOOK.on = 0; window.__ampLook = 0; try { cs = null; cjx = 0; cjy = 0; } catch (e) {} }   // eslint-disable-line no-undef
+  addEventListener('pointerdown', e => {
+    if (e.pointerType !== 'mouse' || e.button !== 2 || !flyingNow()) return;
+    LOOK.on = 1; LOOK.x0 = e.clientX; LOOK.y0 = e.clientY; window.__ampLook = 1;
+    try { cs = 'rmb'; cjx = 0; cjy = 0; } catch (x) {}                                         // eslint-disable-line no-undef
+    e.stopImmediatePropagation(); e.preventDefault();                                          // right-click no longer locks
+  }, true);
+  addEventListener('pointermove', e => {
+    if (!LOOK.on) return;
+    if (!(e.buttons & 2) || !flyingNow()) { lookEnd(); return; }
+    const w = GG(() => CW_) || innerWidth, h = GG(() => CH_) || innerHeight;
+    try {
+      cjx = Math.max(-1, Math.min(1, (e.clientX - LOOK.x0) / (w * .3)));                     // eslint-disable-line no-undef
+      cjy = Math.max(-1, Math.min(1, (e.clientY - LOOK.y0) / (h * .35)));                    // eslint-disable-line no-undef
+    } catch (x) {}
+  }, true);
+  addEventListener('pointerup', e => { if (e.button === 2) lookEnd(); }, true);
+  addEventListener('blur', lookEnd);
+
   // ------------------------------------------------------------------ session
   let token = ls.get(TK), me = null, uiState = 'boot';   // boot | online | offline | down
   let readyRes; const ready = new Promise(r => { readyRes = r; });
