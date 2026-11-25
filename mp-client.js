@@ -569,7 +569,7 @@
       const done = (j.bugs || []).filter(b => !b.draft);
       if (!bov || !done.length) return;
       bov.querySelector('.mine').innerHTML = '<label>YOUR REPORTS</label>' + done.map(b =>
-        `<div class="mb"><span class="st st-${escH(b.status)}">${BUG_ST[b.status] || escH(b.status)}</span> #${b.id} ${escH(b.title)}${b.rel && b.status === 'fixed' ? ' <span class="st st-fixed">· IN ' + escH(b.rel) + '</span>' : ''}${b.note && b.status !== 'open' ? `<div class="nt">${escH(b.note)}</div>` : ''}</div>`).join('');
+        `<div class="mb"><span class="st st-${escH(b.status)}">${BUG_ST[b.status] || escH(b.status)}</span> #${b.id} ${escH(b.title)}${b.rel && b.status === 'fixed' ? ' <span class="st st-fixed">· IN ' + escH(b.rel) + '</span>' : ''}${b.note ? `<div class="nt">${escH(b.note)}</div>` : ''}</div>`).join('');
     }).catch(() => {});
   }
   // F8 (not while typing in a text box): during play a snapshot that doesn't stop the game,
@@ -597,7 +597,13 @@
     if (GG(() => CIN)) return '';                                                                          // eslint-disable-line no-undef
     const s = GG(() => st);
     if (s === 5 || s === 2 || s === 3 || GG(() => MPP.on)) return 'pause';                                 // eslint-disable-line no-undef
-    if (s === 0) return 'menu';
+    // Bug #10: only on ordinary menu lists. Full-screen screens (workshops, armory, market, career,
+    // battle picker...) are pages with just a BACK row, and the armory opens over them (earm);
+    // there the button covered their tabs. F8 still works on those screens.
+    if (s === 0) {
+      const rows = GG(() => PAGES[hpg].rows);                                                              // eslint-disable-line no-undef
+      return Array.isArray(rows) && rows.length > 1 && !GG(() => earm) ? 'menu' : '';                       // eslint-disable-line no-undef
+    }
     return '';
   }
   function dropCallout(seen) { if (callout) { callout.remove(); callout = null; } if (seen) ls.set(SEEN, '1'); }
