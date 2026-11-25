@@ -1,4 +1,4 @@
-/* ASKIIES combat alerts (combat-alerts.js v1.0.0)
+/* ASKIIES combat alerts (combat-alerts.js v1.1.0)
  *
  * Loaded after the game (and plane-engine.js), before </body>. Adds:
  *
@@ -12,7 +12,10 @@
  *    line under the reticle ("GUN HITS ×4 −9 · HULL 81% · ★ VIPER", "MISSILE HIT −35 …") and a metallic
  *    tick (guns) or heavy thump (missiles).
  *
- * 3. ONLINE PLUMBING: in a battle the game only sent "you took X damage" to the other pilot; their
+ * 3. VOICE + LOCK TONES: "Bitchin' Betty" clips (betty/*.wav) for the game's spoken warnings, and a lock
+ *    tone for every lock on you (fast double beep = locked, slow beep = locking) plus "Enemy lock.".
+ *
+ * 4. ONLINE PLUMBING: in a battle the game only sent "you took X damage" to the other pilot; their
  *    missiles existed only on the shooter's screen, so the target got no lock tone, no missile warning
  *    and flares could not work. Battle presence (through mp-client.js's window.__ampPres hook) now also
  *    carries your lock, your missiles in flight and your flare count. The target sees and hears the lock,
@@ -110,15 +113,31 @@
       A.thr.push({ p: g.p, k: 'msl', nm: g.nm, pvp: 1 });
     }
   }
-  function pvpSounds(dt) {
-    let lock = 0, trk = 0, near = null, nd = 1e9;
-    for (const T of A.thr) {
-      if (!T.pvp) continue;
-      if (T.k === 'lock') lock = 1; else if (T.k === 'trk') trk = 1;
-      else { const d = T.p.distanceTo(myPos()); if (d < nd) { nd = d; near = T; } }
+  // lock tones for EVERY lock on you (AI radar, AI heat-seeker, other pilots): the game only clicked
+  // faintly for radar locks. Locked = fast insistent double beep; locking = slow single beep.
+  // A fresh lock also gets the voice: "Enemy lock."
+  function lockSounds(dt) {
+    let lock = null, trk = null;
+    for (const T of A.thr) { if (T.k === 'lock') lock = lock || T; else if (T.k === 'trk') trk = trk || T; }
+    A.lockT -= dt;
+    if (A.lockT <= 0 && (lock || trk) && G(() => aOK())) {
+      G(() => {
+        const t = AX.currentTime, d = aCh(.6, 0, 0);
+        if (lock) { aOs(d, t, { ty: 'square', f: 1900, d: .05, v: .055 }); aOs(d, t + .08, { ty: 'square', f: 1900, d: .05, v: .055 }); }
+        else aOs(d, t, { ty: 'square', f: 1250, d: .07, v: .04 });
+      });
+      A.lockT = lock ? .3 : .8;
     }
-    A.lockT -= dt; A.mslT -= dt;
-    if ((lock || trk) && A.lockT <= 0) { G(() => rwrLock()); A.lockT = lock ? .3 : .9; }
+    if (lock && !A.wasLock) G(() => vox('lock'));
+    A.wasLock = !!lock;
+  }
+  function pvpSounds(dt) {
+    let near = null, nd = 1e9;
+    for (const T of A.thr) {
+      if (!T.pvp || T.k !== 'msl') continue;
+      const d = T.p.distanceTo(myPos()); if (d < nd) { nd = d; near = T; }
+    }
+    A.mslT -= dt;
     if (near) {
       if (A.mslT <= 0) { G(() => tone(A.mslC ? 760 : 560, .11, .035, 'sawtooth')); A.mslC = !A.mslC; A.mslT = .18; }
       if (nd < 2400) G(() => vox('msl', clockOf(near.p)));
@@ -193,6 +212,94 @@
     };
   }
 
+  // ------------------------------------------------------------------ "Bitchin' Betty" voice
+  // The game speaks its cockpit warnings (VOICE WARNINGS option) through the browser's text-to-speech,
+  // which sounds different on every device, is often quiet and is missing on some phones. These are
+  // recorded clips (betty/*.wav, one consistent female voice) played through a cockpit-radio filter
+  // in the game's own audio mix (SFX volume applies). The game's speech calls are routed here; until
+  // the clips have loaded, or for anything without a clip, the browser voice is used as before.
+  const BASE = new URL('betty/', (document.currentScript && document.currentScript.src) || location.href);
+  const BKEYS = ['pull', 'msl', 'launch', 'fire', 'stall', 'alt', 'bank', 'warn', 'over', 'g', 'bingo', 'lock'];
+  for (let i = 1; i <= 12; i++) BKEYS.push('c' + i);
+  const BETTY = { buf: {}, real: {}, loading: 0, chain: null, srcs: [], pri: 0, end: 0, endT: 0, onend: null };
+  G(() => { if (!VW.lock) VW.lock = { t: 'Enemy lock.', s: 'ENEMY LOCK', p: 7, cd: 6 }; });
+  // betty/real/<name>.mp3|.wav|.ogg (your own recordings) win over the generated betty/<name>.wav,
+  // and play untouched (no radio filter: real cockpit recordings already sound like the cockpit)
+  function bettyLoad() {
+    const ax = G(() => AX); if (!ax) return;                          // after the first tap/click (audio unlocked)
+    BETTY.loading = 1;
+    const get = u => fetch(u, { cache: 'no-cache' }).then(r => (r.ok && !/text\/html/.test(r.headers.get('content-type') || '') ? r.arrayBuffer() : null)).catch(() => null);
+    const dec = ab => new Promise(res => { try { ax.decodeAudioData(ab, b => res(b), () => res(null)); } catch (e) { res(null); } });
+    for (const k of BKEYS) {
+      (async () => {
+        for (const ext of ['mp3', 'wav', 'ogg']) {
+          const ab = await get(new URL('real/' + k + '.' + ext, BASE));
+          const b = ab && await dec(ab);
+          if (b) { BETTY.buf[k] = b; BETTY.real[k] = 1; return; }
+        }
+        const ab = await get(new URL(k + '.wav?v=1', BASE));
+        const b = ab && await dec(ab);
+        if (b) BETTY.buf[k] = b;
+      })();
+    }
+  }
+  function bettyChain() {
+    if (BETTY.chain) return BETTY.chain;
+    const ax = AX, hp = ax.createBiquadFilter(), pk = ax.createBiquadFilter(), lpf = ax.createBiquadFilter(), ws = ax.createWaveShaper(), g = ax.createGain();
+    hp.type = 'highpass'; hp.frequency.value = 330;
+    pk.type = 'peaking'; pk.frequency.value = 2200; pk.Q.value = 1; pk.gain.value = 5;
+    lpf.type = 'lowpass'; lpf.frequency.value = 3600;
+    const c = new Float32Array(1024); for (let i = 0; i < 1024; i++) { const x = i / 511.5 - 1; c[i] = Math.tanh(x * 1.8) / Math.tanh(1.8); }
+    ws.curve = c; g.gain.value = 1.15;
+    hp.connect(pk); pk.connect(lpf); lpf.connect(ws); ws.connect(g);
+    return (BETTY.chain = { in: hp, out: g });
+  }
+  function bettyStop() {
+    for (const s of BETTY.srcs) { try { s.stop(); } catch (e) {} }
+    BETTY.srcs = []; clearTimeout(BETTY.endT);
+    const f = BETTY.onend; BETTY.onend = null; BETTY.end = 0;
+    if (f) try { f(); } catch (e) {}
+  }
+  function bettyPlay(keys, pri, onend) {
+    keys = keys.filter((k, i) => i === 0 || BETTY.buf[k]);          // a missing clock clip is just skipped
+    if (!BETTY.buf[keys[0]] || !G(() => aOK())) return false;
+    if (BETTY.end > AX.currentTime && pri <= BETTY.pri) { if (onend) setTimeout(onend, 0); return true; }   // busy with something as urgent
+    bettyStop();
+    const ch = bettyChain(), out = aCh(1, 0, 0);
+    ch.out.disconnect(); ch.out.connect(out);
+    let t = AX.currentTime + .02;
+    for (const k of keys) {
+      const s = AX.createBufferSource(); s.buffer = BETTY.buf[k]; s.connect(BETTY.real[k] ? out : ch.in); s.start(t);
+      BETTY.srcs.push(s); t += BETTY.buf[k].duration + .07;
+    }
+    BETTY.pri = pri; BETTY.end = t; BETTY.onend = onend || null;
+    BETTY.endT = setTimeout(() => { BETTY.srcs = []; const f = BETTY.onend; BETTY.onend = null; if (f) try { f(); } catch (e) {} }, (t - AX.currentTime) * 1000);
+    return true;
+  }
+  function bettySay(u) {
+    const text = String((u && u.text) || '');
+    const vw = G(() => VW) || {};
+    let k = null;
+    for (const key in vw) if (vw[key] && vw[key].t && text.indexOf(vw[key].t) === 0) { if (!k || vw[key].t.length > vw[k].t.length) k = key; }
+    if (!k || !BKEYS.includes(k)) return false;
+    const keys = [k], m = /(\d+)\s*o'clock/i.exec(text.slice(vw[k].t.length));
+    if (m && +m[1] >= 1 && +m[1] <= 12) keys.push('c' + (+m[1]));
+    return bettyPlay(keys, vw[k].p || 1, () => { try { u.onend && u.onend(); } catch (e) {} });
+  }
+  // route the game's speech through Betty (and give devices without text-to-speech a stand-in)
+  if (!window.SpeechSynthesisUtterance) window.SpeechSynthesisUtterance = function (t) { this.text = t; };
+  if (window.speechSynthesis && window.speechSynthesis.speak) {
+    const ss = window.speechSynthesis, sp = ss.speak.bind(ss), cn = ss.cancel.bind(ss);
+    try {
+      ss.speak = u => { if (!bettySay(u)) sp(u); };
+      ss.cancel = () => { bettyStop(); cn(); };
+    } catch (e) {}
+  } else {
+    try {
+      window.speechSynthesis = { speaking: false, pending: false, paused: false, speak: u => { bettySay(u); }, cancel: bettyStop, pause() {}, resume() {}, getVoices: () => [] };
+    } catch (e) {}
+  }
+
   // ------------------------------------------------------------------ per frame
   const _up = update;
   update = function (dt) {                                            // eslint-disable-line no-global-assign
@@ -201,6 +308,7 @@
     return r;
   };
   function tick(dt) {
+    if (!BETTY.loading) bettyLoad();
     A.thr.length = 0;
     A.vig = Math.max(0, A.vig - dt * 1.3);
     if (st !== 1 || !P) {
@@ -215,7 +323,7 @@
     A.cmSum = cs;
     if (inJet()) aiThreats();
     if (inBattle()) pvpTick();
-    if (inJet()) pvpSounds(dt);
+    if (inJet()) { pvpSounds(dt); lockSounds(dt); } else A.wasLock = false;
     // damage this frame -> the hit line
     const hp = P.hp;
     if (A.lastHp == null || hp > A.lastHp + .01) A.lastHp = hp;           // new sortie / repairs
@@ -369,7 +477,10 @@
   }
 
   window.ASKIIES_ALERTS = {
-    version: '1.0.0',
+    version: '1.1.0',
+    betty: () => Object.keys(BETTY.buf).length + '/' + BKEYS.length + ' loaded, ' + Object.keys(BETTY.real).length + ' real',
+    say: (k, clock) => bettyPlay(clock ? [k, 'c' + clock] : [k], 99),
+    talking: () => !!(G(() => AX) && BETTY.end > AX.currentTime),
     state: () => ({ threats: A.thr.map(t => t.k + (t.pvp ? ':pvp' : '') + ':' + t.nm), ghosts: A.ghosts.size, cm: A.cm, hit: A.txt && A.txt.k })
   };
   console.log('[combat-alerts] threat warnings + hit feedback ready');
