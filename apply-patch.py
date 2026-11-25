@@ -3,7 +3,7 @@
 Attach the external ASKIIES upgrade modules to any upstream ASKIIES.html:
   - mp-client.js (self-hosted online: accounts, multiplayer rooms, cloud saves) in <head>,
     so window.claude exists before the game script runs;
-  - terrain-engine.js, plane-engine.js, hangar-menu.js & combat-alerts.js right before </body>.
+  - game-fixes.js, terrain-engine.js, plane-engine.js, hangar-menu.js & combat-alerts.js right before </body>.
 
 Usage:
     python apply-patch.py                  # patches ASKIIES.html in-place
@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 TAGS = [
+    '<script src="game-fixes.js"></script>',
     '<script src="terrain-engine.js"></script>',
     '<script src="plane-engine.js"></script>',
     '<script src="hangar-menu.js"></script>',
