@@ -1,4 +1,4 @@
-/* ASKIIES combat alerts (combat-alerts.js v1.2.0)
+/* ASKIIES combat alerts (combat-alerts.js v1.2.1)
  *
  * Loaded after the game (and plane-engine.js), before </body>. Adds:
  *
@@ -308,6 +308,15 @@
     s.connect(aCh(.55, 0, 0)); s.start(AX.currentTime + .01, t.s);
     BETTY.loop = s;
   }
+  function stopLoop() { if (BETTY.loop) { try { BETTY.loop.stop(); } catch (e) {} } BETTY.loop = null; BETTY.loopK = null; }
+  // Bug #1 / #5: the game stops calling update() on the pause menu, in the hangar and while the tab
+  // is hidden, so rwrLoops() never heard that the lock was over and the tone looped forever.
+  // This watchdog runs on its own timer and silences the loop whenever we are not actively flying.
+  setInterval(() => {
+    if (!BETTY.loop) return;
+    const flying = G(() => st) === 1 && !G(() => P.dead);
+    if (!flying || document.hidden || performance.now() - (A.tickAt || 0) > 400) stopLoop();
+  }, 150);
 
   function bettyChain() {
     if (BETTY.chain) return BETTY.chain;
@@ -429,6 +438,7 @@
     return r;
   };
   function tick(dt) {
+    A.tickAt = performance.now();
     if (!BETTY.loading) bettyLoad();
     A.thr.length = 0;
     A.vig = Math.max(0, A.vig - dt * 1.3);
@@ -600,7 +610,7 @@
   }
 
   window.ASKIIES_ALERTS = {
-    version: '1.2.0',
+    version: '1.2.1',
     betty: () => ({ mode: ['OFF', 'TTS', 'REAL'][mode()], tts: Object.keys(BETTY.buf).length + '/' + BKEYS.length, real: Object.keys(BETTY.real), tones: Object.keys(BETTY.tone), loop: BETTY.loopK, last: BETTY.last }),
     say: (k, clock) => bettyPlay(clock ? [k, 'c' + clock] : [k], 99),
     talking: () => !!(G(() => AX) && BETTY.end > AX.currentTime),
