@@ -315,9 +315,21 @@
   #amp-bug .mb .nt{color:rgba(242,255,248,.5);font-size:11px;margin:2px 0 0 4px}
   #amp-bug .st{display:inline-block;min-width:92px;font-size:10px;letter-spacing:1px;color:#ffd36a}
   #amp-bug .st-fixed{color:#7dffa8}#amp-bug .st-wontfix,#amp-bug .st-notbug{color:rgba(242,255,248,.45)}
-  #amp-bugbtn{position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:99990;
-    font:12px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;padding:8px 14px;cursor:pointer;background:rgba(4,22,20,.9);color:#cfe;border:1px solid rgba(116,255,184,.45)}
-  #amp-bugbtn:hover{border-color:#74ffb8;color:#fff}`;
+  #amp-bugbtn{position:fixed;z-index:99990;font:12px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;padding:8px 14px;cursor:pointer;
+    background:rgba(4,22,20,.9);color:#cfe;border:1px solid rgba(116,255,184,.45);white-space:nowrap}
+  #amp-bugbtn:hover{border-color:#74ffb8;color:#fff;box-shadow:0 0 12px rgba(116,255,184,.3)}
+  #amp-bugbtn.pause{left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom))}
+  #amp-bugbtn.menu{left:62%;top:max(10px,env(safe-area-inset-top));transform:translateX(-50%)}
+  #amp-bugnew{position:fixed;z-index:99991;left:62%;top:calc(max(10px,env(safe-area-inset-top)) + 44px);transform:translateX(-50%);width:min(330px,70vw);box-sizing:border-box;
+    background:rgba(4,22,20,.97);border:1px solid #74ffb8;box-shadow:0 0 24px rgba(116,255,184,.3);padding:10px 12px;
+    font:12px/1.45 "Share Tech Mono",ui-monospace,monospace;color:rgba(242,255,248,.85);animation:ampPulse 1.6s ease-in-out 3}
+  #amp-bugnew::before{content:"";position:absolute;top:-7px;left:50%;margin-left:-7px;border:7px solid transparent;border-top:0;border-bottom-color:#74ffb8}
+  #amp-bugnew b{color:#ffd36a;font-weight:normal;letter-spacing:1px}
+  #amp-bugnew button{display:block;margin:8px 0 0 auto;font:inherit;font-size:12px;padding:5px 14px;cursor:pointer;background:#2f9f5a;color:#fff;border:1px solid #74ffb8}
+  @keyframes ampPulse{50%{box-shadow:0 0 36px rgba(116,255,184,.6)}}
+  #amp-bughint{position:fixed;z-index:99990;left:50%;top:max(72px,calc(env(safe-area-inset-top) + 64px));transform:translateX(-50%);pointer-events:none;max-width:92vw;text-align:center;
+    font:12px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;color:#e8fff2;background:rgba(4,22,20,.78);border:1px solid rgba(116,255,184,.45);padding:6px 12px;transition:opacity .8s}
+  #amp-bughint.out{opacity:0}`;
   function addCss() { if (!document.getElementById('amp-css')) { const s = document.createElement('style'); s.id = 'amp-css'; s.textContent = CSS + CSS_BUG; document.head.appendChild(s); } }
 
   // ------------------------------------------------------------------ sign-in overlay
@@ -491,16 +503,60 @@
     e.preventDefault(); e.stopImmediatePropagation();
     if (bov) closeBug(); else showBug();
   }, true);
-  // a REPORT A BUG button on the pause screen (single player and the online battle menu)
-  let pbtn = null;
+  // ---- letting players know
+  //  menus (hangar, every page): a REPORT A BUG button at the top, between the logo and the money
+  //  pause screen, online battle menu, mission result: the same button, bottom left
+  //  flying: a reminder for a few seconds at take-off, on the first 3 sorties on this device
+  //  first visit after this update: a NEW callout under the menu button until it is closed or used
+  const TOUCH = (() => { try { return matchMedia('(pointer:coarse)').matches; } catch (e) { return false; } })();
+  const BUGLBL = TOUCH ? '🐞 REPORT A BUG' : '🐞 REPORT A BUG · F8';
+  const SEEN = 'askiies-bug-seen', HINTS = 'askiies-bug-hints';
+  let pbtn = null, pmode = '', callout = null, hint = null, lastSt = null;
+  function bugBtnMode() {
+    if (bov || ov || !document.body) return '';
+    if (GG(() => CIN)) return '';                                                                          // eslint-disable-line no-undef
+    const s = GG(() => st);
+    if (s === 5 || s === 2 || s === 3 || GG(() => MPP.on)) return 'pause';                                 // eslint-disable-line no-undef
+    if (s === 0) return 'menu';
+    return '';
+  }
+  function dropCallout(seen) { if (callout) { callout.remove(); callout = null; } if (seen) ls.set(SEEN, '1'); }
+  function openFromButton() { dropCallout(true); showBug(); }
+  function noGame(node) { for (const t of ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'touchstart', 'touchend', 'click', 'wheel']) node.addEventListener(t, e => e.stopPropagation()); }
+  function takeoffHint() {
+    const n = +(ls.get(HINTS) || 0);
+    if (n >= 3 || hint) return;
+    ls.set(HINTS, String(n + 1));
+    addCss();
+    hint = el(`<div id="amp-bughint">FOUND A BUG? ${TOUCH ? 'PAUSE (II) ▸ REPORT A BUG' : 'PRESS F8 ANY TIME'} · IT GOES STRAIGHT TO THE DEVELOPERS</div>`);
+    document.body.appendChild(hint);
+    setTimeout(() => { if (hint) hint.classList.add('out'); }, 6500);
+    setTimeout(() => { if (hint) { hint.remove(); hint = null; } }, 7300);
+  }
   setInterval(() => {
-    const show = !bov && !ov && (GG(() => st) === 5 || !!GG(() => MPP.on));                          // eslint-disable-line no-undef
-    if (show && !pbtn && document.body) {
-      addCss();
-      pbtn = el('<button id="amp-bugbtn" type="button">REPORT A BUG · F8</button>');
-      for (const t of ['pointerdown', 'mousedown', 'touchstart', 'click']) pbtn.addEventListener(t, e => { e.stopPropagation(); if (t === 'click') showBug(); });
-      document.body.appendChild(pbtn);
-    } else if (!show && pbtn) { pbtn.remove(); pbtn = null; }
+    const s = GG(() => st);
+    if (s === 1 && (lastSt === 4 || lastSt === 0)) takeoffHint();                                         // a new sortie, not leaving the pause menu
+    if (s !== 1 && hint) { hint.remove(); hint = null; }
+    lastSt = s;
+    const mode = bugBtnMode();
+    if (mode !== pmode) {
+      if (pbtn) { pbtn.remove(); pbtn = null; }
+      if (mode) {
+        addCss();
+        pbtn = el(`<button id="amp-bugbtn" class="${mode}" type="button" title="Report a bug${TOUCH ? '' : ' (F8)'}">${BUGLBL}</button>`);
+        noGame(pbtn);
+        pbtn.addEventListener('click', openFromButton);
+        document.body.appendChild(pbtn);
+      }
+      pmode = mode;
+    }
+    if (mode === 'menu' && !callout && !ls.get(SEEN)) {
+      callout = el(`<div id="amp-bugnew"><b>NEW</b> Found something broken? Tap this button${TOUCH ? '' : ' or press <b>F8</b> any time, even mid-flight'}.
+        Your report goes straight to the developers with a screenshot, and you can see when it gets fixed.<button type="button">GOT IT</button></div>`);
+      noGame(callout);
+      callout.querySelector('button').addEventListener('click', () => dropCallout(true));
+      document.body.appendChild(callout);
+    } else if (mode !== 'menu' && callout) dropCallout(false);
   }, 250);
 
   async function signOut() {

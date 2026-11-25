@@ -36,6 +36,11 @@
   const fix = s => { if (typeof s !== 'string' || s.length < 8) return s; for (const [a, b] of WORDS) s = s.replace(a, b); return s; };
   const quick = s => typeof s === 'string' && s.length > 10 && (s.indexOf('Claude') >= 0 || s.indexOf('RIGHT-CLICK') >= 0 || s.indexOf('MULTIPLAYER TO JOIN') >= 0 || s.indexOf('THIS PAGE') >= 0 || s.indexOf('SHARED LINK') >= 0 || s.indexOf('SAVE TRANSFER') >= 0);
   try { if (typeof ULOG !== 'undefined') for (const u of ULOG) if (u && Array.isArray(u.notes)) u.notes = u.notes.map(fix); } catch (e) {}
+  // the bug reporter (mp-client.js) in the UPDATE LOG of the current version
+  try {
+    const n = ULOG[0] && ULOG[0].notes;
+    if (Array.isArray(n) && !n.some(s => /^REPORT A BUG/.test(s))) n.unshift('REPORT A BUG: found something broken? Press F8 any time (even mid-flight), use the REPORT A BUG button on the hangar screens and the pause screen, or INFO ▸ REPORT A BUG. Your report goes straight to the developers with a screenshot, and signed-in pilots can see when it gets fixed.');
+  } catch (e) {}
   // HUD text, toasts and text-box hints are drawn from string literals inside the game: rewrite on the way out
   try { const _tx = tx; tx = function (s) { if (quick(s)) arguments[0] = fix(s); return _tx.apply(this, arguments); }; } catch (e) {}   // eslint-disable-line no-global-assign
   try { const _t = toastS; toastS = function (s) { if (quick(s)) arguments[0] = fix(s); return _t.apply(this, arguments); }; } catch (e) {}   // eslint-disable-line no-global-assign
