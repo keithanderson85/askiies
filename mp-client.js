@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.6.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.7.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -11,6 +11,24 @@
 (function () {
   'use strict';
   if (window.claude && window.claude.use) return;
+
+  // ------------------------------------------------------------------ recent errors (attached to bug reports)
+  // Registered in <head>, before the game, so errors from the very start are kept (last 25).
+  const T0 = Date.now(), ERRS = [];
+  const errPush = (m, at, stack) => {
+    m = String(m || 'error').slice(0, 400);
+    const last = ERRS[ERRS.length - 1];
+    if (last && last.m === m && last.at === at) { last.n = (last.n || 1) + 1; return; }   // a per-frame error: count it once
+    ERRS.push({ t: Math.round((Date.now() - T0) / 100) / 10, m, at: at || undefined, stack: stack ? String(stack).slice(0, 900) : undefined });
+    if (ERRS.length > 25) ERRS.shift();
+  };
+  const fileOf = s => String(s || '').split(/[?#]/)[0].split('/').pop();
+  addEventListener('error', e => {
+    if (e && e.target && e.target !== window && (e.target.src || e.target.href)) { errPush('failed to load ' + fileOf(e.target.src || e.target.href)); return; }
+    errPush(e.message, e.filename ? fileOf(e.filename) + ':' + e.lineno + ':' + e.colno : '', e.error && e.error.stack);
+  }, true);
+  addEventListener('unhandledrejection', e => { const r = e.reason; errPush('unhandled promise: ' + (r && (r.message || r.code) || r), '', r && r.stack); });
+  { const ce = console.error; console.error = function () { try { errPush('console.error: ' + [...arguments].map(a => a && a.stack ? a.stack : typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ').slice(0, 400)); } catch (x) {} return ce.apply(this, arguments); }; }
 
   const BASE = new URL('mp/', document.baseURI);
   const API = p => new URL('api/' + p, BASE).href;
@@ -245,7 +263,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.6.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
+  window.ASKIIES_MP = { version: '1.7.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut, bug: () => showBug(), errors: () => ERRS.slice() };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
@@ -284,7 +302,23 @@
   #amp-iv button{font:inherit;font-size:14px;padding:8px 22px;cursor:pointer;background:#2f9f5a;color:#fff;border:1px solid #74ffb8}
   #amp-iv button.alt{background:#122a2a;color:#cfe;border:1px solid rgba(116,255,184,.35);padding:8px 16px}
   #amp-iv .bar{height:2px;background:#74ffb8;margin-top:10px;transition:width .3s linear}`;
-  function addCss() { if (!document.getElementById('amp-css')) { const s = document.createElement('style'); s.id = 'amp-css'; s.textContent = CSS; document.head.appendChild(s); } }
+  // the bug report box looks like the sign-in box, plus a text area, a list box and a screenshot preview
+  const CSS_BUG = CSS.split('#amp-iv')[0].replace(/#amp-ov/g, '#amp-bug') + `
+  #amp-bug .bx{max-height:calc(100vh - 8vh);overflow:auto}
+  #amp-bug input{font-size:15px}
+  #amp-bug textarea,#amp-bug select{width:100%;box-sizing:border-box;background:#02100d;color:#f2fff8;border:1px solid rgba(116,255,184,.6);font:inherit;font-size:14px;padding:8px;outline:none;resize:vertical}
+  #amp-bug textarea:focus,#amp-bug select:focus{border-color:#74ffb8}
+  #amp-bug label.ck{display:flex;align-items:center;gap:8px;cursor:pointer}
+  #amp-bug label.ck input{width:auto;margin:0;accent-color:#2f9f5a}
+  #amp-bug .pv img{display:block;max-width:100%;max-height:150px;border:1px solid rgba(116,255,184,.35);margin-top:4px}
+  #amp-bug .mb{font-size:12px;padding:4px 0;border-top:1px solid rgba(116,255,184,.15);color:rgba(242,255,248,.8)}
+  #amp-bug .mb .nt{color:rgba(242,255,248,.5);font-size:11px;margin:2px 0 0 4px}
+  #amp-bug .st{display:inline-block;min-width:92px;font-size:10px;letter-spacing:1px;color:#ffd36a}
+  #amp-bug .st-fixed{color:#7dffa8}#amp-bug .st-wontfix,#amp-bug .st-notbug{color:rgba(242,255,248,.45)}
+  #amp-bugbtn{position:fixed;left:max(12px,env(safe-area-inset-left));bottom:max(12px,env(safe-area-inset-bottom));z-index:99990;
+    font:12px "Share Tech Mono",ui-monospace,monospace;letter-spacing:1px;padding:8px 14px;cursor:pointer;background:rgba(4,22,20,.9);color:#cfe;border:1px solid rgba(116,255,184,.45)}
+  #amp-bugbtn:hover{border-color:#74ffb8;color:#fff}`;
+  function addCss() { if (!document.getElementById('amp-css')) { const s = document.createElement('style'); s.id = 'amp-css'; s.textContent = CSS + CSS_BUG; document.head.appendChild(s); } }
 
   // ------------------------------------------------------------------ sign-in overlay
   let ov = null;
@@ -329,6 +363,146 @@
     uiChanged();
     setTimeout(() => { try { f.cs.focus(); } catch (e) {} }, 30);
   }
+
+  // ------------------------------------------------------------------ bug reports
+  // F8 anywhere, INFO ▸ REPORT A BUG (hangar-menu.js) or the button on the pause screen.
+  // The report carries the game state, device and recent errors, plus an optional screenshot,
+  // and lands on the admin page's BUGS tab (and the `bugs` command in the server container).
+  const BUG_KINDS = [['gameplay', 'GAMEPLAY'], ['controls', 'CONTROLS'], ['graphics', 'GRAPHICS'], ['crash', 'CRASH / FREEZE'],
+    ['online', 'ONLINE'], ['sound', 'SOUND'], ['menus', 'MENUS'], ['other', 'OTHER']];
+  const BUG_ST = { open: 'OPEN', progress: 'BEING FIXED', fixed: 'FIXED', wontfix: "WON'T FIX", notbug: 'NOT A BUG' };
+  let bov = null;
+  const escH = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // Screenshot: drawn in the next animation frame, right after the game has drawn its own, so the
+  // 3D canvas still holds the picture. Every visible canvas is stacked in page order.
+  function grabShot() {
+    return new Promise(res => requestAnimationFrame(() => {
+      try {
+        const cvs = [...document.querySelectorAll('canvas')].filter(c => {
+          const r = c.getBoundingClientRect(), s = getComputedStyle(c);
+          return r.width > 40 && r.height > 40 && s.display !== 'none' && s.visibility !== 'hidden' && +s.opacity > 0.05;
+        });
+        if (!cvs.length) return res(null);
+        const W = innerWidth, H = innerHeight;
+        const make = (max, q) => {
+          const k = Math.min(1, max / Math.max(W, H)), o = document.createElement('canvas');
+          o.width = Math.round(W * k); o.height = Math.round(H * k);
+          const g = o.getContext('2d'); g.fillStyle = '#000'; g.fillRect(0, 0, o.width, o.height);
+          for (const c of cvs) { const r = c.getBoundingClientRect(); try { g.drawImage(c, r.left * k, r.top * k, r.width * k, r.height * k); } catch (e) {} }
+          return o.toDataURL('image/jpeg', q);
+        };
+        let d = make(1100, 0.72);
+        if (d.length > 390e3) d = make(800, 0.6);
+        if (d.length > 390e3) d = make(640, 0.5);
+        res(d.length <= 390e3 && d.length > 2000 ? d : null);
+      } catch (e) { res(null); }
+    }));
+  }
+  function gpuName() {
+    try {
+      const gl = R.getContext(), x = gl.getExtension('WEBGL_debug_renderer_info');   // eslint-disable-line no-undef
+      return x ? gl.getParameter(x.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    } catch (e) { return undefined; }
+  }
+  function bugCtx() {
+    const opt = {};
+    GG(() => { for (const [k, v] of Object.entries(OPT)) if (v == null || typeof v !== 'object') opt[k] = v; });   // eslint-disable-line no-undef
+    const v3 = p => p ? [Math.round(p.x), Math.round(p.y), Math.round(p.z)] : undefined;
+    return {
+      page: location.pathname + location.search,
+      game: GG(() => ULOG[0].v),                                                                          // eslint-disable-line no-undef
+      modules: { mp: window.ASKIIES_MP && ASKIIES_MP.version, planes: GG(() => ASKIIES_PLANES.version), terrain: GG(() => ASKIIES_TERRAIN.version),   // eslint-disable-line no-undef
+        alerts: GG(() => ASKIIES_ALERTS.version), menu: GG(() => ASKIIES_MENU.version) },                // eslint-disable-line no-undef
+      state: {
+        st: GG(() => st), mode: GG(() => MODE), menuPage: GG(() => hpg), flying: flyingNow(),           // eslint-disable-line no-undef
+        vehicle: GG(() => VEHM), aircraft: GG(() => A && (A.n || A.name)), dead: GG(() => !!P.dead),     // eslint-disable-line no-undef
+        pos: GG(() => v3(P.p)), hp: GG(() => P.hp), wave: GG(() => wave), kills: GG(() => kills),        // eslint-disable-line no-undef
+        enemies: GG(() => en.length), missiles: GG(() => mi.length), battle: GG(() => !!(CA && CA.on)), mpPause: GG(() => !!MPP.on),   // eslint-disable-line no-undef
+        secondsSinceLoad: Math.round((Date.now() - T0) / 1000),
+      },
+      online: { state: uiState, pilot: me ? me.display : null, rooms: GG(() => [...net.rooms.keys()]) },
+      device: { ua: navigator.userAgent, screen: screen.width + 'x' + screen.height, window: innerWidth + 'x' + innerHeight,
+        dpr: devicePixelRatio, touch: navigator.maxTouchPoints || 0, lang: navigator.language, gpu: gpuName(),
+        memoryGB: navigator.deviceMemory, cores: navigator.hardwareConcurrency },
+      options: opt,
+      errors: ERRS.slice(),
+    };
+  }
+  function closeBug() { if (bov) { bov.remove(); bov = null; } uiChanged(); }
+  async function showBug() {
+    if (bov) return;
+    if (!document.body) return;
+    addCss();
+    if (ov) closeLogin();
+    if (flyingNow() && !GG(() => CA && CA.on)) GG(() => pause());                                     // eslint-disable-line no-undef
+    const shotP = grabShot();                                                                           // before our box covers the screen
+    const ctx = bugCtx();
+    if (document.pointerLockElement) try { document.exitPointerLock(); } catch (e) {}
+    bov = el(`<div id="amp-bug"><form class="bx" autocomplete="off">
+      <h2>REPORT A BUG</h2>
+      <p>Tell us what went wrong. The game version, what you were doing and any errors are attached for you.</p>
+      <label>WHAT KIND?</label><select name="kind">${BUG_KINDS.map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select>
+      <label>SHORT TITLE <span>(e.g. "jet spins when I fire a missile")</span></label><input name="title" maxlength="120" required>
+      <label>WHAT HAPPENED? <span>what you did · what you expected · what happened instead</span></label><textarea name="body" maxlength="4000" rows="5"></textarea>
+      ${me ? '' : '<label>YOUR NAME <span>(optional · sign in and you can see when it gets fixed)</span></label><input name="who" maxlength="14">'}
+      <label class="ck"><input type="checkbox" name="shot" checked> INCLUDE A SCREENSHOT <span class="sh">(taking it…)</span></label>
+      <div class="pv"></div>
+      <div class="err"></div>
+      <div class="row"><button type="button" class="alt" data-k="x">CANCEL</button><button type="submit">SEND REPORT</button></div>
+      <div class="mine"></div>
+    </form></div>`);
+    shield(bov);
+    const f = bov.querySelector('form'), errEl = bov.querySelector('.err'), btn = f.querySelector('button[type=submit]');
+    let shot = null;
+    shotP.then(d => {
+      shot = d; if (!bov) return;
+      const sh = bov.querySelector('.sh'), pv = bov.querySelector('.pv');
+      if (d) { sh.textContent = ''; pv.innerHTML = `<img alt="screenshot" src="${d}">`; }
+      else { sh.textContent = '(not available here)'; f.shot.checked = false; f.shot.disabled = true; }
+    });
+    f.shot.addEventListener('change', () => { const pv = bov && bov.querySelector('.pv'); if (pv) pv.style.display = f.shot.checked ? '' : 'none'; });
+    bov.addEventListener('click', e => { const k = e.target && e.target.getAttribute('data-k'); if (k === 'x' || e.target === bov) closeBug(); });
+    bov.addEventListener('keydown', e => { if (e.key === 'Escape') { e.preventDefault(); closeBug(); } });
+    f.addEventListener('submit', async e => {
+      e.preventDefault(); errEl.textContent = ''; btn.disabled = true;
+      try {
+        const j = await call('bug', { kind: f.kind.value, title: f.title.value, body: f.body.value, who: f.who ? f.who.value : undefined,
+          ver: ctx.game, ctx, shot: f.shot.checked ? shot : undefined });
+        closeBug();
+        toast('BUG #' + j.id + ' SENT · THANK YOU');
+      } catch (x) {
+        errEl.textContent = (x.code === 'unavailable' ? 'Server unreachable. Try again shortly.' : x.message || 'Failed').toUpperCase();
+      } finally { btn.disabled = false; }
+    });
+    document.body.appendChild(bov);
+    uiChanged();
+    setTimeout(() => { try { f.title.focus(); } catch (e) {} }, 30);
+    if (me) call('bugs/mine').then(j => {
+      if (!bov || !j.bugs.length) return;
+      bov.querySelector('.mine').innerHTML = '<label>YOUR REPORTS</label>' + j.bugs.map(b =>
+        `<div class="mb"><span class="st st-${escH(b.status)}">${BUG_ST[b.status] || escH(b.status)}</span> #${b.id} ${escH(b.title)}${b.rel && b.status === 'fixed' ? ' <span class="st st-fixed">· IN ' + escH(b.rel) + '</span>' : ''}${b.note && b.status !== 'open' ? `<div class="nt">${escH(b.note)}</div>` : ''}</div>`).join('');
+    }).catch(() => {});
+  }
+  // F8 opens it anywhere (not while typing in a text box)
+  addEventListener('keydown', e => {
+    if (e.key !== 'F8' || e.repeat) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA') && !(bov && bov.contains(a))) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    if (bov) closeBug(); else showBug();
+  }, true);
+  // a REPORT A BUG button on the pause screen (single player and the online battle menu)
+  let pbtn = null;
+  setInterval(() => {
+    const show = !bov && !ov && (GG(() => st) === 5 || !!GG(() => MPP.on));                          // eslint-disable-line no-undef
+    if (show && !pbtn && document.body) {
+      addCss();
+      pbtn = el('<button id="amp-bugbtn" type="button">REPORT A BUG · F8</button>');
+      for (const t of ['pointerdown', 'mousedown', 'touchstart', 'click']) pbtn.addEventListener(t, e => { e.stopPropagation(); if (t === 'click') showBug(); });
+      document.body.appendChild(pbtn);
+    } else if (!show && pbtn) { pbtn.remove(); pbtn = null; }
+  }, 250);
+
   async function signOut() {
     try { await call('logout', {}); } catch (e) {}
     token = null; ls.set(TK, null); ls.set(SKIP, '1');

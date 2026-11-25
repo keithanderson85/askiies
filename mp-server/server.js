@@ -16,7 +16,7 @@ const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { WebSocketServer } = require('ws');
 
-const VERSION = '1.2.0';
+const VERSION = '1.3.0';
 const STARTED = Date.now();
 const PORT = +process.env.PORT || 8080;
 const DB_PATH = process.env.DB_PATH || '/data/askiies.db';
@@ -75,6 +75,28 @@ db.exec(`
     info TEXT
   );
   CREATE INDEX IF NOT EXISTS events_ts ON events(ts);
+  -- v1.3: bug reports from players (status: open, progress, fixed, wontfix, notbug)
+  CREATE TABLE IF NOT EXISTS bugs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts INTEGER NOT NULL,
+    uid TEXT,
+    who TEXT,
+    net TEXT,
+    kind TEXT NOT NULL,
+    title TEXT NOT NULL,
+    body TEXT NOT NULL,
+    ver TEXT,
+    ctx TEXT,
+    shot TEXT,
+    status TEXT NOT NULL DEFAULT 'open',
+    priority TEXT NOT NULL DEFAULT 'normal',
+    rel TEXT,
+    links TEXT,
+    note TEXT,
+    updated INTEGER NOT NULL,
+    closed INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS bugs_status ON bugs(status, ts);
   -- v1.2: players online, sampled once a minute
   CREATE TABLE IF NOT EXISTS samples (
     ts INTEGER PRIMARY KEY,
@@ -198,6 +220,48 @@ function failed(ip) {
 }
 setInterval(() => { const cut = Date.now() - 10 * 60e3; for (const [k, r] of tries) if (r.t < cut) tries.delete(k); }, 60e3).unref();
 
+// ---------------------------------------------------------------- bug reports
+// Players send them from the game (signed in or not); the admin page and `bugs` (bugs.js, for
+// working through them from a terminal / an AI assistant) read and close them.
+const BUG_KINDS = ['crash', 'controls', 'graphics', 'online', 'sound', 'gameplay', 'menus', 'other'];
+const BUG_STATUS = ['open', 'progress', 'fixed', 'wontfix', 'notbug'];
+const BUG_PRIO = ['low', 'normal', 'high', 'critical'];
+const MAX_SHOT = 400 << 10;
+const B = {
+  ins: db.prepare('INSERT INTO bugs (ts, uid, who, net, kind, title, body, ver, ctx, shot, status, updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'),
+  mine: db.prepare("SELECT id, ts, title, status, rel, note, updated FROM bugs WHERE uid = ? ORDER BY id DESC LIMIT 10"),
+  list: db.prepare('SELECT id, ts, uid, who, net, kind, title, body, ver, ctx, status, priority, rel, links, note, updated, closed, shot IS NOT NULL AS hasShot FROM bugs ORDER BY id DESC LIMIT 1000'),
+  shot: db.prepare('SELECT shot FROM bugs WHERE id = ?'),
+  get: db.prepare('SELECT id, status, note, priority, rel, links, kind, closed FROM bugs WHERE id = ?'),
+  set: db.prepare('UPDATE bugs SET status = ?, note = ?, priority = ?, rel = ?, links = ?, kind = ?, updated = ?, closed = ? WHERE id = ?'),
+  del: db.prepare('DELETE FROM bugs WHERE id = ?'),
+  counts: db.prepare('SELECT status, count(*) AS n FROM bugs GROUP BY status'),
+};
+const bugReports = new Map();   // net -> [timestamps]
+function bugBlocked(ip) {
+  const now = Date.now(), a = (bugReports.get(ip) || []).filter(t => t > now - 864e5);
+  bugReports.set(ip, a);
+  return a.filter(t => t > now - 3600e3).length >= 10 || a.length >= 40;
+}
+setInterval(() => { const cut = Date.now() - 864e5; for (const [k, a] of bugReports) if (!a.some(t => t > cut)) bugReports.delete(k); }, 3600e3).unref();
+const clip = (s, n) => String(s == null ? '' : s).replace(/\u0000/g, '').slice(0, n);
+function bugSubmit(ip, user, b) {
+  if (bugBlocked(ip)) throw new HttpErr('rate_limited', 'too many reports from this network, try again later');
+  const title = clip(b.title, 120).trim(), body = clip(b.body, 4000).trim();
+  if (title.length < 3) throw new HttpErr('invalid_argument', 'give the bug a short title');
+  const kind = BUG_KINDS.includes(b.kind) ? b.kind : 'other';
+  let ctx = null;
+  if (b.ctx && typeof b.ctx === 'object') { ctx = JSON.stringify(b.ctx); if (ctx.length > 48 << 10) ctx = JSON.stringify({ truncated: true, head: ctx.slice(0, 40 << 10) }); }
+  let shot = null;
+  if (typeof b.shot === 'string' && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/.test(b.shot) && b.shot.length <= MAX_SHOT) shot = b.shot;
+  const now = Date.now();
+  const r = B.ins.run(now, user ? user.id : null, user ? user.disp : clip(b.who, 14).trim() || null, netTag(ip), kind, title, body, clip(b.ver, 20), ctx, shot, 'open', now);
+  bugReports.get(ip).push(now);
+  logEv('bug', user ? user.id : null, '#' + r.lastInsertRowid + ' ' + title.slice(0, 80));
+  console.log('[mp] bug #' + r.lastInsertRowid, kind, title.slice(0, 80));
+  return { ok: true, id: Number(r.lastInsertRowid) };
+}
+
 // Open registration: at most SIGNUPS_PER_NET_DAY new pilots per network per day
 const signups = new Map();   // ip -> [timestamps]
 function signupBlocked(ip) {
@@ -305,8 +369,13 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { token: newSession(u.id), id: u.id, callsign: u.callsign, display: u.display || u.callsign });
     }
 
+    // bug reports work signed in or not (offline players find bugs too)
+    if (route === 'POST /api/bug') return send(res, 200, bugSubmit(clientIp(req), sessionUser(bearer(req)), await readBody(req)));
+
     const user = sessionUser(bearer(req));
     if (!user) throw new HttpErr('unauthenticated', 'signed out');
+
+    if (route === 'GET /api/bugs/mine') return send(res, 200, { bugs: B.mine.all(user.id) });
 
     if (route === 'GET /api/me') return send(res, 200, { id: user.id, callsign: user.cs, display: user.disp });
     if (route === 'POST /api/profile') {
@@ -561,6 +630,7 @@ function adminOverview() {
       new1: users.filter(u => u.created > now - day).length, new7: users.filter(u => u.created > now - 7 * day).length,
       act1: users.filter(u => u.last > now - day).length, act7: users.filter(u => u.last > now - 7 * day).length,
       docs: c.docs, docBytes: c.docBytes, sessions: c.sessions, friends: c.friends,
+      bugs: Object.fromEntries(B.counts.all().map(r => [r.status, r.n])),
     },
     users, rooms: roomList,
     events: A.events.all(),
@@ -601,6 +671,34 @@ async function adminRoute(req, res, url, route) {
   if (!exp || exp < Date.now()) throw new HttpErr('unauthenticated', 'admin sign-in needed');
   if (route === 'GET /admin/api/overview') return send(res, 200, adminOverview());
   if (route === 'POST /admin/api/logout') { adminTokens.delete(sha(t)); return send(res, 200, { ok: true }); }
+  if (route === 'GET /admin/api/bugs') {
+    return send(res, 200, { bugs: B.list.all().map(b => { let ctx = null; try { ctx = b.ctx ? JSON.parse(b.ctx) : null; } catch (e) {} return Object.assign(b, { ctx, hasShot: !!b.hasShot }); }) });
+  }
+  if (route === 'GET /admin/api/bugshot') {
+    const r = B.shot.get(+url.searchParams.get('id') || 0);
+    if (!r || !r.shot) throw new HttpErr('not_found', 'no screenshot');
+    return send(res, 200, { shot: r.shot });
+  }
+  if (route === 'POST /admin/api/bug') {
+    const b = await readBody(req), cur = B.get.get(+b.id || 0);
+    if (!cur) throw new HttpErr('not_found', 'no such bug');
+    if (b.action === 'delete') { B.del.run(cur.id); logEv('bug_delete', null, '#' + cur.id); return send(res, 200, { ok: true }); }
+    const status = b.status == null ? cur.status : String(b.status);
+    if (!BUG_STATUS.includes(status)) throw new HttpErr('invalid_argument', 'bad status');
+    const note = b.note == null ? cur.note : clip(b.note, 4000);
+    const priority = b.priority == null ? cur.priority : String(b.priority);
+    if (!BUG_PRIO.includes(priority)) throw new HttpErr('invalid_argument', 'bad priority');
+    const kind = b.kind == null ? cur.kind : String(b.kind);
+    if (!BUG_KINDS.includes(kind)) throw new HttpErr('invalid_argument', 'bad area');
+    const rel = b.rel == null ? cur.rel : (clip(b.rel, 40).trim() || null);
+    const links = b.links == null ? cur.links : (clip(b.links, 2000).split(/\s+/).filter(u => /^https?:\/\/\S+$/.test(u)).join('\n') || null);
+    const now = Date.now();
+    const isOpen = s => s === 'open' || s === 'progress';
+    const closed = isOpen(status) ? null : (!isOpen(cur.status) && cur.closed ? cur.closed : now);   // keep the first close time
+    B.set.run(status, note, priority, rel, links, kind, now, closed, cur.id);
+    if (status !== cur.status) logEv('bug_status', null, '#' + cur.id + ' ' + cur.status + ' → ' + status + ' (admin page)');
+    return send(res, 200, { ok: true });
+  }
   if (route === 'POST /admin/api/user') {
     const b = await readBody(req);
     const u = A.full.get(String(b.id || ''));

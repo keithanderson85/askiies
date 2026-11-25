@@ -2,8 +2,10 @@ FROM node:24-alpine
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev && npm cache clean --force
-COPY server.js admin.html ./
-RUN mkdir -p /data && chown node:node /data
+COPY server.js admin.html bugs.js ./
+# `docker exec askiies-mp bugs ...` : the bug list from a terminal (see bugs.js)
+RUN mkdir -p /data && chown node:node /data && \
+    printf '#!/bin/sh\nexec node --disable-warning=ExperimentalWarning /app/bugs.js "$@"\n' > /usr/local/bin/bugs && chmod +x /usr/local/bin/bugs
 USER node
 ENV NODE_ENV=production PORT=8080 DB_PATH=/data/askiies.db
 EXPOSE 8080

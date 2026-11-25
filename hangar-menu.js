@@ -93,7 +93,11 @@
     if (PAGES.minfo) {
       PAGES.minfo.t = 'INFO';
       PAGES.minfo.rows = PAGES.minfo.rows.filter(r => r.go !== 'opt' && r.go !== 'acct');
-      try { MENUG.minfo.d = 'Field guide, archive, update log and achievements.'; } catch (e) {}
+      // bug reports (mp-client.js): F8 opens the same box anywhere, the pause screen has a button too
+      if (!PAGES.minfo.rows.some(r => r && r._bug)) PAGES.minfo.rows.push({ _bug: 1, l: 'REPORT A BUG',
+        a: () => { try { window.ASKIIES_MP.bug(); } catch (e) {} },
+        d: 'Something broken or weird? Tell us and it goes straight to the bug list. F8 opens this anywhere, even mid-flight.' });
+      try { MENUG.minfo.d = 'Field guide, archive, update log, achievements and bug reports.'; } catch (e) {}
     }
 
     // ---- save transfer lives under ACCOUNT & SAVES; its BACK returns there

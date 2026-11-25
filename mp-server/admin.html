@@ -82,6 +82,8 @@ h2 { font: 600 13px var(--mono); letter-spacing: .08em; text-transform: uppercas
 .tools { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
 .tools input, .tools select { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 6px 10px; }
 .tools input { flex: 1; min-width: 160px; }
+.tools input[type="checkbox"] { flex: none; min-width: 0; padding: 0; margin: 0 4px 0 0; vertical-align: -2px; }
+.tools label { display: inline-flex; align-items: center; gap: 6px; }
 .tablewrap { overflow-x: auto; }
 table { border-collapse: collapse; width: 100%; font-size: 13px; }
 th { text-align: left; font: 600 11px var(--mono); letter-spacing: .05em; text-transform: uppercase; color: var(--ink-2); padding: 8px; border-bottom: 1px solid var(--line); white-space: nowrap; cursor: pointer; user-select: none; }
@@ -102,6 +104,43 @@ tr.detail td { background: var(--surface-2); }
 #login input { width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--page); margin: 8px 0 12px; }
 #login .err { color: var(--bad); font-size: 13px; min-height: 18px; }
 .hide { display: none !important; }
+/* tabs */
+.tabs { display: flex; gap: 4px; background: var(--surface-2); border-radius: 8px; padding: 3px; }
+.tabs button { border: 0; background: none; padding: 6px 14px; border-radius: 6px; cursor: pointer; color: var(--ink-2); }
+.tabs button.on { background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line); }
+.badge { font: 11px var(--mono); background: var(--accent); color: #fff; border-radius: 9px; padding: 0 6px; margin-left: 2px; }
+.badge:empty { display: none; }
+/* bug board: status columns × swimlanes */
+.board { overflow-x: auto; padding-bottom: 6px; margin-bottom: 8px; }
+.bgrid { display: grid; gap: 8px; min-width: 760px; }
+.bgrid .colh { font: 600 12px var(--mono); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-2); padding: 4px 8px; display: flex; justify-content: space-between; }
+.bgrid .laneh { grid-column: 1 / -1; font: 600 12px var(--mono); color: var(--ink-2); padding: 10px 2px 2px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+.bgrid .laneh:first-of-type { border-top: 0; }
+.cell { background: var(--surface-2); border-radius: 8px; padding: 6px; min-height: 64px; display: flex; flex-direction: column; gap: 6px; transition: box-shadow .1s; }
+.cell.over { box-shadow: inset 0 0 0 2px var(--accent); }
+.bcard { background: var(--surface); border: 1px solid var(--line); border-radius: 7px; padding: 8px 9px; cursor: grab; font-size: 13px; }
+.bcard:hover { border-color: var(--ink-3); }
+.bcard.drag { opacity: .4; }
+.bcard .bt { font-weight: 500; margin: 2px 0 6px; overflow-wrap: anywhere; }
+.bcard .bm { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; color: var(--ink-3); font-size: 11px; }
+.bcard .id { font: 11px var(--mono); color: var(--ink-3); }
+.p-critical { color: var(--bad) !important; } .p-high { color: var(--warn) !important; } .p-low { color: var(--ink-3) !important; }
+/* bug dialog */
+.dlg { position: fixed; inset: 0; background: rgba(0,0,0,.45); z-index: 30; display: flex; align-items: flex-start; justify-content: center; padding: 4vh 12px; overflow: auto; }
+.dlg-in { width: min(860px, 100%); }
+.dlg-in h3 { margin: 0 0 4px; font-size: 18px; overflow-wrap: anywhere; }
+.form2 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 12px 0; }
+@media (max-width: 700px) { .form2 { grid-template-columns: 1fr 1fr; } }
+.form2 label, .fld { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--ink-2); }
+.form2 select, .form2 input, .fld textarea { background: var(--page); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; font: inherit; font-size: 13px; color: var(--ink); }
+.fld { margin-bottom: 10px; }
+.fld textarea { resize: vertical; min-height: 54px; }
+.body { white-space: pre-wrap; background: var(--surface-2); border-radius: 6px; padding: 10px; margin: 8px 0; overflow-wrap: anywhere; }
+.shot img { max-width: 100%; border-radius: 6px; border: 1px solid var(--line); display: block; }
+details { margin: 8px 0; } summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
+pre { background: var(--surface-2); border-radius: 6px; padding: 10px; overflow: auto; font: 12px/1.4 var(--mono); max-height: 320px; margin: 6px 0; }
+.errl li { font: 12px var(--mono); }
+.links a { color: var(--accent); overflow-wrap: anywhere; }
 .status { font: 12px var(--mono); color: var(--ink-3); }
 .status.bad { color: var(--bad); }
 </style>
@@ -123,6 +162,10 @@ tr.detail td { background: var(--surface-2); }
       <div class="logo">ASK<span>II</span>ES · ADMIN</div>
       <div class="sub" id="srv"></div>
     </div>
+    <nav class="tabs" role="tablist">
+      <button type="button" role="tab" data-v="dash">Dashboard</button>
+      <button type="button" role="tab" data-v="bugs">Bugs <span class="badge" id="bugBadge"></span></button>
+    </nav>
     <div class="spacer"></div>
     <span class="status" id="status"></span>
     <button class="btn" id="refresh" type="button">Refresh</button>
@@ -130,6 +173,29 @@ tr.detail td { background: var(--surface-2); }
     <button class="btn" id="out" type="button">Sign out</button>
   </header>
 
+  <div id="vBugs" class="hide">
+    <div class="tools">
+      <input id="bq" type="search" placeholder="Search bugs…">
+      <label class="sub">Swimlanes
+        <select id="lane">
+          <option value="none">None</option>
+          <option value="priority">Priority</option>
+          <option value="kind">Area</option>
+          <option value="rel">Release</option>
+        </select>
+      </label>
+      <label class="sub"><input type="checkbox" id="showClosed"> Show won't fix / not a bug</label>
+      <span class="spacer"></span>
+      <span class="sub" id="bugCount"></span>
+    </div>
+    <div class="board" id="board"></div>
+    <p class="sub">Drag a card to another column to change its status, or to another lane to change its priority, area or release.
+      Claude can work the same list from a terminal with <span class="mono">docker exec askiies-mp bugs</span>.</p>
+  </div>
+
+  <div id="bugDlg" class="dlg hide" role="dialog" aria-modal="true"><div class="dlg-in card" id="bugDlgIn"></div></div>
+
+  <div id="vDash">
   <section class="tiles" id="tiles"></section>
 
   <section class="grid3">
@@ -175,6 +241,7 @@ tr.detail td { background: var(--surface-2); }
           <option value="login_fail">Failed sign-ins</option>
           <option value="password">Password changes</option>
           <option value="display">Name changes</option>
+          <option value="bug">Bug reports</option>
           <option value="admin">Admin actions</option>
         </select>
       </div>
@@ -186,6 +253,7 @@ tr.detail td { background: var(--surface-2); }
       <p class="sub" style="margin-top:14px">“net” tags are a scrambled code for the network a player used (never their address). The same tag on several pilots means they signed up from the same place. Sign-up is open to anyone, limited to <span id="lim"></span> new pilots per network per day.</p>
     </div>
   </section>
+  </div>
 </div>
 
 <script>
@@ -251,6 +319,7 @@ async function load() {
   try {
     DATA = await api('overview');
     render();
+    if (VIEW === 'bugs') { const j = await api('bugs'); if (DRAG == null) { BUGS = j.bugs; renderBoard(); } }
     $('status').className = 'status'; $('status').textContent = 'updated ' + new Date().toLocaleTimeString();
   } catch (e) {
     if (TOKEN) { $('status').className = 'status bad'; $('status').textContent = 'could not reach the server: ' + e.message; }
@@ -452,11 +521,12 @@ async function act(a, id) {
 const EV = {
   register: ['new pilot', 'good'], visit: ['came online', ''], login: ['signed in', ''], login_fail: ['failed sign-in', 'warn'], password: ['changed password', ''],
   display: ['changed name', ''], admin_login: ['admin signed in', 'acc'], admin_fail: ['wrong admin password', 'bad'],
+  bug: ['bug reported', 'warn'], bug_status: ['bug moved', 'acc'], bug_delete: ['bug deleted', 'bad'],
   admin_signout: ['admin: signed out', 'acc'], admin_resetpw: ['admin: reset password', 'acc'], admin_display: ['admin: renamed', 'acc'], admin_delete: ['admin: deleted pilot', 'bad'],
 };
 function renderEvents() {
   const k = $('evKind').value;
-  const list = DATA.events.filter(e => !k || (k === 'admin' ? e.kind.startsWith('admin') : e.kind === k)).slice(0, 120);
+  const list = DATA.events.filter(e => !k || (k === 'admin' || k === 'bug' ? e.kind.startsWith(k) : e.kind === k)).slice(0, 120);
   $('evList').innerHTML = list.length ? list.map(e => { const [l, c] = EV[e.kind] || [e.kind, '']; return `<li><span class="t">${esc(when(e.ts))}</span><span class="tag ${c}">${esc(l)}</span>
     <span>${esc(e.who || '')}</span><span class="m">${esc(e.info || '')}</span></li>`; }).join('') : '<li class="empty">Nothing yet. Activity is recorded from this server version on.</li>';
 }
@@ -464,7 +534,136 @@ $('q').oninput = () => renderPilots();
 $('show').onchange = () => renderPilots();
 $('evKind').onchange = () => renderEvents();
 
+// ---------------------------------------------------------------- tabs
+let VIEW = location.hash === '#bugs' ? 'bugs' : 'dash';
+function setView(v) {
+  VIEW = v;
+  $('vDash').classList.toggle('hide', v !== 'dash'); $('vBugs').classList.toggle('hide', v !== 'bugs');
+  document.querySelectorAll('.tabs button').forEach(b => { b.classList.toggle('on', b.dataset.v === v); b.setAttribute('aria-selected', b.dataset.v === v); });
+  try { history.replaceState(null, '', v === 'bugs' ? '#bugs' : location.pathname); } catch (e) {}
+  if (v === 'bugs' && TOKEN) api('bugs').then(j => { BUGS = j.bugs; renderBoard(); }).catch(() => {});
+}
+document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => setView(b.dataset.v));
+{ const r = render; render = function () { r(); const c = DATA.totals.bugs || {}; $('bugBadge').textContent = ((c.open || 0) + (c.progress || 0)) || ''; }; }
+
+// ---------------------------------------------------------------- bug board
+let BUGS = [], DRAG = null, OPENBUG = null;
+const BCOLS = [['open', 'Open'], ['progress', 'In progress'], ['fixed', 'Fixed'], ['closed', "Won't fix · not a bug"]];
+const BST = { open: 'Open', progress: 'In progress', fixed: 'Fixed', wontfix: "Won't fix", notbug: 'Not a bug' };
+const PRIOS = ['critical', 'high', 'normal', 'low'];
+const AREAS = { crash: 'Crash / freeze', controls: 'Controls', graphics: 'Graphics', online: 'Online', sound: 'Sound', gameplay: 'Gameplay', menus: 'Menus', other: 'Other' };
+const col = b => b.status === 'wontfix' || b.status === 'notbug' ? 'closed' : b.status;
+const laneOf = (b, L) => L === 'priority' ? b.priority : L === 'kind' ? b.kind : L === 'rel' ? (b.rel || '') : '';
+const laneName = (v, L) => L === 'priority' ? v[0].toUpperCase() + v.slice(1) + ' priority' : L === 'kind' ? AREAS[v] || v : L === 'rel' ? (v || 'No release yet') : '';
+{ const l = pref.get('askiies-admin-lane'); if (l) $('lane').value = l; if (pref.get('askiies-admin-closed') === '1') $('showClosed').checked = true; }
+$('lane').onchange = () => { pref.set('askiies-admin-lane', $('lane').value); renderBoard(); };
+$('showClosed').onchange = () => { pref.set('askiies-admin-closed', $('showClosed').checked ? '1' : '0'); renderBoard(); };
+$('bq').oninput = () => renderBoard();
+
+function renderBoard() {
+  const L = $('lane').value, q = $('bq').value.trim().toLowerCase();
+  const cols = BCOLS.filter(c => c[0] !== 'closed' || $('showClosed').checked);
+  const list = BUGS.filter(b => !q || ('#' + b.id + ' ' + b.title + ' ' + b.body + ' ' + (b.who || '') + ' ' + (b.rel || '') + ' ' + (b.note || '')).toLowerCase().includes(q));
+  let lanes = [''];
+  if (L === 'priority') lanes = PRIOS.slice();
+  else if (L === 'kind') lanes = Object.keys(AREAS).filter(k => list.some(b => b.kind === k));
+  else if (L === 'rel') { const r = [...new Set(list.map(b => b.rel || ''))]; lanes = r.filter(Boolean).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })); lanes.unshift(''); }
+  if (!lanes.length) lanes = [''];
+  const sorted = (a, b) => (PRIOS.indexOf(a.priority) - PRIOS.indexOf(b.priority)) || (b.ts - a.ts);
+  let h = `<div class="bgrid" style="grid-template-columns:repeat(${cols.length},minmax(190px,1fr))">`;
+  h += cols.map(([k, l]) => `<div class="colh"><span>${l}</span><span>${list.filter(b => col(b) === k).length}</span></div>`).join('');
+  for (const ln of lanes) {
+    const inLane = list.filter(b => laneOf(b, L) === ln);
+    if (L !== 'none') h += `<div class="laneh"><span class="${L === 'priority' ? 'p-' + ln : ''}">${esc(laneName(ln, L))}</span><span class="tag">${inLane.filter(b => !['wontfix', 'notbug', 'fixed'].includes(b.status)).length} open</span></div>`;
+    for (const [k] of cols) {
+      h += `<div class="cell" data-col="${k}" data-lane="${esc(ln)}">` + inLane.filter(b => col(b) === k).sort(sorted).map(card).join('') + '</div>';
+    }
+  }
+  $('board').innerHTML = h + '</div>';
+  const c = DATA && DATA.totals.bugs || {};
+  $('bugCount').textContent = `${(c.open || 0)} open · ${(c.progress || 0)} in progress · ${(c.fixed || 0)} fixed`;
+  $('board').querySelectorAll('.bcard').forEach(el => {
+    el.ondragstart = e => { DRAG = +el.dataset.id; el.classList.add('drag'); e.dataTransfer.effectAllowed = 'move'; try { e.dataTransfer.setData('text/plain', el.dataset.id); } catch (x) {} };
+    el.ondragend = () => { el.classList.remove('drag'); DRAG = null; };
+    el.onclick = () => openBug(+el.dataset.id);
+    el.onkeydown = e => { if (e.key === 'Enter') openBug(+el.dataset.id); };
+  });
+  $('board').querySelectorAll('.cell').forEach(cell => {
+    cell.ondragover = e => { if (DRAG != null) { e.preventDefault(); cell.classList.add('over'); } };
+    cell.ondragleave = () => cell.classList.remove('over');
+    cell.ondrop = e => { e.preventDefault(); cell.classList.remove('over'); if (DRAG != null) dropBug(DRAG, cell.dataset.col, cell.dataset.lane); };
+  });
+}
+function card(b) {
+  const age = ago(b.ts);
+  return `<div class="bcard" draggable="true" tabindex="0" data-id="${b.id}">
+    <div class="bm"><span class="id">#${b.id}</span>${b.priority !== 'normal' ? `<span class="tag p-${b.priority}">${b.priority}</span>` : ''}<span class="tag">${esc(AREAS[b.kind] || b.kind)}</span>${b.rel ? `<span class="tag acc">${esc(b.rel)}</span>` : ''}${b.status === 'wontfix' || b.status === 'notbug' ? `<span class="tag">${BST[b.status]}</span>` : ''}</div>
+    <div class="bt">${esc(b.title)}</div>
+    <div class="bm"><span>${esc(b.who || 'anonymous')}</span><span>· ${esc(age)}</span>${b.hasShot ? '<span title="has a screenshot">· 📷</span>' : ''}${b.links ? '<span title="linked on GitHub">· 🔗</span>' : ''}${b.ctx && b.ctx.errors && b.ctx.errors.length ? `<span class="p-high" title="browser errors attached">· ${b.ctx.errors.length} err</span>` : ''}</div>
+  </div>`;
+}
+async function saveBug(id, ch) {
+  try { await api('bug', Object.assign({ id }, ch)); }
+  catch (e) { alert('Could not save: ' + e.message); }
+  await load();
+  if (VIEW !== 'bugs') { BUGS = (await api('bugs')).bugs; renderBoard(); }
+}
+function dropBug(id, colK, lane) {
+  const b = BUGS.find(x => x.id === id); if (!b) return;
+  const ch = {}, L = $('lane').value;
+  const st = colK === 'closed' ? (b.status === 'wontfix' || b.status === 'notbug' ? b.status : 'wontfix') : colK;
+  if (st !== b.status) ch.status = st;
+  if (L !== 'none' && laneOf(b, L) !== lane) { if (L === 'priority') ch.priority = lane; else if (L === 'kind') ch.kind = lane; else if (L === 'rel') ch.rel = lane; }
+  if (!Object.keys(ch).length) return;
+  Object.assign(b, ch); renderBoard();                       // move it at once, then save
+  saveBug(id, ch);
+}
+
+async function openBug(id) {
+  const b = BUGS.find(x => x.id === id); if (!b) return;
+  OPENBUG = id;
+  const c = b.ctx || {}, errs = c.errors || [];
+  const ctx = Object.assign({}, c); delete ctx.errors;
+  const rels = [...new Set(BUGS.map(x => x.rel).filter(Boolean))];
+  $('bugDlgIn').innerHTML = `
+    <div class="tools" style="margin:0"><span class="id mono">#${b.id}</span><span class="tag">${esc(AREAS[b.kind] || b.kind)}</span><span class="sub">from ${esc(b.who || 'anonymous')} · ${esc(when(b.ts))} · game v${esc(b.ver || '?')}${b.closed ? ' · closed ' + esc(when(b.closed)) : ''}</span><span class="spacer"></span><button class="btn" type="button" data-x>Close</button></div>
+    <h3>${esc(b.title)}</h3>
+    <div class="body">${esc(b.body || '(no description)')}</div>
+    <div class="form2">
+      <label>Status<select id="fSt">${Object.entries(BST).map(([k, l]) => `<option value="${k}"${k === b.status ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Priority<select id="fPr">${PRIOS.map(p => `<option value="${p}"${p === b.priority ? ' selected' : ''}>${p}</option>`).join('')}</select></label>
+      <label>Area<select id="fAr">${Object.entries(AREAS).map(([k, l]) => `<option value="${k}"${k === b.kind ? ' selected' : ''}>${l}</option>`).join('')}</select></label>
+      <label>Release<input id="fRel" list="relList" value="${esc(b.rel || '')}" placeholder="e.g. v17.23" maxlength="40"><datalist id="relList">${rels.map(r => `<option value="${esc(r)}">`).join('')}</datalist></label>
+    </div>
+    <div class="fld"><span>Note <span class="sub">(the player sees this on their own reports)</span></span><textarea id="fNote" maxlength="4000">${esc(b.note || '')}</textarea></div>
+    <div class="fld"><span>GitHub links <span class="sub">(commit, pull request or issue URLs, one per line)</span></span><textarea id="fLinks" maxlength="2000" placeholder="https://github.com/…">${esc(b.links || '')}</textarea></div>
+    ${b.links ? `<div class="links sub">${b.links.split('\n').map(u => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(u.replace(/^https:\/\/github\.com\//, ''))}</a>`).join(' · ')}</div>` : ''}
+    <div class="actions"><button class="btn primary" type="button" id="fSave">Save</button><button class="btn danger" type="button" id="fDel">Delete (spam)</button><span class="sub" id="fMsg"></span></div>
+    ${b.hasShot ? '<details open><summary>Screenshot</summary><div class="shot" id="fShot"><span class="sub">loading…</span></div></details>' : ''}
+    <details ${errs.length ? 'open' : ''}><summary>Browser errors before the report (${errs.length})</summary>
+      ${errs.length ? '<ul class="list errl">' + errs.map(e => `<li><span class="t">${e.t != null ? e.t + 's' : ''}</span><span>${esc(e.m)}${e.n > 1 ? ' ×' + e.n : ''}${e.at ? ' <span class="m">@ ' + esc(e.at) + '</span>' : ''}${e.stack ? `<pre>${esc(e.stack)}</pre>` : ''}</span></li>`).join('') + '</ul>' : '<p class="sub">None recorded.</p>'}</details>
+    <details><summary>Game state, device and options</summary><pre>${esc(JSON.stringify(ctx, null, 2))}</pre></details>
+    <p class="sub">Terminal: <span class="mono">docker exec askiies-mp bugs show ${b.id}</span></p>`;
+  $('bugDlg').classList.remove('hide');
+  const D = $('bugDlgIn');
+  D.querySelector('[data-x]').onclick = closeBugDlg;
+  $('fSave').onclick = async () => {
+    $('fMsg').textContent = 'saving…';
+    await saveBug(id, { status: $('fSt').value, priority: $('fPr').value, kind: $('fAr').value, rel: $('fRel').value, note: $('fNote').value, links: $('fLinks').value });
+    closeBugDlg();
+  };
+  $('fDel').onclick = async () => {
+    if (!confirm(`Delete bug #${b.id} for good? Use this for spam; otherwise mark it "Not a bug".`)) return;
+    await saveBug(id, { action: 'delete' }); closeBugDlg();
+  };
+  if (b.hasShot) api('bugshot?id=' + id).then(j => { const s = $('fShot'); if (s && OPENBUG === id) s.innerHTML = `<img alt="screenshot from the player" src="${esc(j.shot)}">`; }).catch(() => {});
+}
+function closeBugDlg() { OPENBUG = null; $('bugDlg').classList.add('hide'); $('bugDlgIn').innerHTML = ''; }
+$('bugDlg').addEventListener('click', e => { if (e.target === $('bugDlg')) closeBugDlg(); });
+addEventListener('keydown', e => { if (e.key === 'Escape' && OPENBUG != null) closeBugDlg(); });
+
 // ---------------------------------------------------------------- start
+setView(VIEW);
 if (TOKEN) { $('app').classList.remove('hide'); load(); } else signedOut();
 </script>
 </body>
