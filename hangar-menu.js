@@ -55,7 +55,7 @@
         ['og_gfx', 'GRAPHICS', 'Aircraft models, terrain engine and quality, pixels, effects, fullscreen and performance.',
           r => ['pmode', 'tmode', 'tqual', 'tres', 'ores', 'terr2', 'envd', 'pfx', 'dof', 'plx', 'lzs', 'perf'].includes(r.k) || /FULLSCREEN|PERFORMANCE OVERLAY/.test(r.l)],
         ['og_ctl', 'CONTROLS & CAMERA', 'Keybinds, mouse control, pitch keys, on-screen buttons, camera and aim assists.',
-          r => ['mctrl', 'pinv', 'obtn', 'cam', 'aim', 'gas'].includes(r.k) || r.go === 'keys'],
+          r => ['mctrl', 'pinv', 'obtn', 'cam', 'camd', 'aim', 'gas'].includes(r.k) || r.go === 'keys'],
         ['og_play', 'GAMEPLAY', 'Difficulty, loadout, missile rails, fuel, mission start, hit camera and warnings.',
           r => ['dif', 'real', 'rrail', 'fuelx', 'tko', 'xr', 'peni', 'vox'].includes(r.k)],
         ['og_story', 'STORY & RADIO', 'Briefings, squadron intros, cutscenes and radio portraits / voices.',

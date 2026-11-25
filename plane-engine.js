@@ -1451,6 +1451,54 @@
     }
   } catch (e) {}
 
+  // ---------- 9b. CAMERA: sticky ENGAGE lock + CAMERA DISTANCE ----------
+  // ENGAGE (OPTIONS > CAMERA) frames your jet and your target. In the game it follows the auto-target
+  // (P.tg), which re-scores every frame by angle-off-nose, so an enemy swinging behind you lost the
+  // camera to whoever was in front. It also dropped the framing inside 140 m, right in the knife fight.
+  // Now the camera keeps the enemy it is framing until that enemy dies, stays out of range for 2 s,
+  // or you pick another target yourself (T / right-click lock). Weapon targeting is unchanged.
+  if (typeof camFocus === 'function' && typeof CAMF !== 'undefined') {
+    camFocus = function (dt) {   // eslint-disable-line no-global-assign
+      const ok = e => !!e && en.includes(e);
+      const T_ = ok(P.tg) ? P.tg : null;
+      const man = ok(P.mtg) && P.mtT > 0 ? P.mtg : null;          // a target the player picked by hand
+      let E = ok(CAMF.e) ? CAMF.e : null;
+      if (E) {
+        const rng = E.ty === 'air' ? 3200 : (E.ty === 'part' || E.boss ? 2600 : 3600);
+        CAMF.far = (E.d || 0) > rng ? (CAMF.far || 0) + dt : 0;
+        if (CAMF.far > 2) { E = null; CAMF.far = 0; }
+      }
+      if (man && man !== E) E = man;                                   // manual pick wins at once
+      else if (!E) {                                                   // nothing framed: take the auto-target once it settles
+        if (T_ && T_ === CAMF.c) CAMF.h += dt; else { CAMF.c = T_; CAMF.h = 0; }
+        if (T_ && CAMF.h > .35) E = T_;
+      } else if (T_ && T_ !== E) {                                     // auto-target moved on: stay, unless ours is far away
+        CAMF.sw = (CAMF.sw || 0) + dt;                                 // and the new one is much closer for a while
+        if (CAMF.sw > 4 && (E.d || 0) > 1500 && (T_.d || 0) < (E.d || 0) * .6) { E = T_; CAMF.sw = 0; }
+      } else CAMF.sw = 0;
+      if (E !== CAMF.e) { const was = CAMF.e; CAMF.e = E; if (E && !was) CAMF.p.copy(E.p); }
+      if (!E) { CAMF.e = null; return; }
+      CAMF.p.lerp(E.p, Math.min(1, dt * (E.ty === 'air' ? 4 : 2.2)));
+      CAMF.d = Math.max(141, CAMF.p.distanceTo(P.p));               // keep framing in close fights (game cut-off is 140 m)
+    };
+  }
+  // CAMERA DISTANCE: scales the chase camera's offset (plain chase and ENGAGE framing alike).
+  // The game's camera sat only ~32 m behind the jet; NORMAL is now 35% further back.
+  if (OPT.camd == null) OPT.camd = 1;
+  LISTS.camd = () => ['CLOSE', 'NORMAL', 'FAR', 'WIDE'];
+  const CAMD = [1, 1.35, 1.7, 2.1];
+  if (typeof camSpring === 'function' && typeof CAMF !== 'undefined') {
+    const _cs = camSpring;
+    camSpring = function (x, v, goal, dt, w) {   // eslint-disable-line no-global-assign
+      // only the flight chase camera's position spring (its velocity vector is CAMF.cv)
+      if (v === CAMF.cv && goal && st !== 3 && !(typeof VEHM !== 'undefined' && VEHM)) {
+        const f = CAMD[OPT.camd | 0] || 1;
+        if (f !== 1) goal.multiplyScalar(f);
+      }
+      return _cs.apply(this, arguments);
+    };
+  }
+
   // ---------- 10. Inject Options Rows (AIRCRAFT STYLE, RAIL STORES, MOUSE CONTROL) ----------
   try {
     const rows = PAGES && PAGES.opt && PAGES.opt.rows;
@@ -1468,6 +1516,11 @@
           d: 'REAL RAILS: every missile in your loadout hangs on the jet (IR on the rails, radar on extra stations), each one leaves its own station when fired and stays gone until you RTB to rearm. Big magazines fire from inside first. STOCK: original look, missiles regrow on the rails.'
         },
         {
+          l: 'CAMERA DISTANCE',
+          k: 'camd',
+          d: 'How far behind your jet the chase camera sits. CLOSE is the original tight view; NORMAL, FAR and WIDE pull back for a less crowded screen. Works with both CAMERA modes.'
+        },
+        {
           l: 'MOUSE CONTROL',
           k: 'mctrl',
           d: 'OFF: keep current controls. MOUSE AIM: steer by pointing the mouse cursor (LMB guns, Wheel throttle, MMB/X missile, RMB lock). VIRTUAL STICK: mouse acts as analog stick.'
@@ -1479,7 +1532,7 @@
   }
 
   window.ASKIIES_PLANES = {
-    version: '1.3.0',
+    version: '1.4.0',
     setMode: m => { OPT.pmode = m | 0; syncModeUniforms(); save(); },
     getMode: () => OPT.pmode | 0,
     setMouseMode: m => { OPT.mctrl = m | 0; save(); },

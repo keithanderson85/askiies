@@ -211,7 +211,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.5.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
+  window.ASKIIES_MP = { version: '1.5.1', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
@@ -527,7 +527,11 @@
   #amp-dk{position:fixed;z-index:9000;display:flex;flex-direction:column;box-sizing:border-box;background:rgb(4,20,18);border:1px solid rgba(116,255,184,.75);
     box-shadow:0 0 18px rgba(116,255,184,.18);font-family:"Share Tech Mono",ui-monospace,monospace;color:#f2fff8;font-size:13px}
   #amp-dk .tb{display:flex;align-items:stretch;border-bottom:1px solid rgba(116,255,184,.3);flex:none}
-  #amp-dk .tab{flex:1;background:transparent;border:0;border-bottom:2px solid transparent;color:rgba(242,255,248,.55);font:inherit;font-size:12px;letter-spacing:2px;padding:8px 4px 6px;cursor:pointer}
+  #amp-dk .tab{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:transparent;border:0;border-bottom:2px solid transparent;color:rgba(242,255,248,.55);font:inherit;font-size:12px;letter-spacing:2px;padding:8px 4px 6px;cursor:pointer;touch-action:manipulation}
+  #amp-dk.sheet{box-shadow:0 0 0 100vmax rgba(0,6,5,.45),0 0 24px rgba(116,255,184,.25)}
+  #amp-dk .ls{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+  #amp-dk button{touch-action:manipulation}
+  @media (max-height:500px){#amp-dk .tab{letter-spacing:1px;font-size:11px;padding:7px 3px 5px}}
   #amp-dk .tab.on{color:#74ffb8;border-bottom-color:#74ffb8;background:rgba(116,255,184,.08)}
   #amp-dk .tab:hover{color:#f2fff8}
   #amp-dk .mn{flex:none;width:30px;background:transparent;border:0;border-left:1px solid rgba(116,255,184,.2);color:#74ffb8;font:inherit;font-size:13px;cursor:pointer}
@@ -571,14 +575,16 @@
         this.render(true);
       });
       document.body.appendChild(this.el);
+      // phone sheet: a tap anywhere outside closes it
+      document.addEventListener('pointerdown', e => { if (this.sheet && this.compact && this.el && !this.el.contains(e.target)) { this.sheet = false; this.tick(); } }, true);
     },
-    show(where) { if (where === 'modes') this.modes = true; if (this.min) { this.min = false; lsSet('amp-dk-min', '0'); } this.tick(); },
+    show(where) { if (where === 'modes') this.modes = true; if (this.min) { this.min = false; lsSet('amp-dk-min', '0'); } this.sheet = true; this.tick(); },
     click(e) {
       const tb = e.target.closest('[data-t]');
-      if (tb) { this.tab = tb.getAttribute('data-t'); lsSet('amp-dk-tab', this.tab); this.open = null; if (this.min) { this.min = false; lsSet('amp-dk-min', '0'); } if (this.tab === 'friends' && me) frLoad(); this.render(true); this.blur(); return; }
+      if (tb) { this.tab = tb.getAttribute('data-t'); lsSet('amp-dk-tab', this.tab); this.open = null; if (this.compact) this.sheet = true; else if (this.min) { this.min = false; lsSet('amp-dk-min', '0'); } if (this.tab === 'friends' && me) frLoad(); this.render(true); this.blur(); return; }
       const a = e.target.closest('[data-a]'); if (!a) return;
       const act = a.getAttribute('data-a'), id = a.getAttribute('data-id');
-      if (act === 'min') { this.min = !this.min; lsSet('amp-dk-min', this.min ? '1' : '0'); if (this.min) this.modes = false; }
+      if (act === 'min') { if (this.compact) this.sheet = !this.sheet; else { this.min = !this.min; lsSet('amp-dk-min', this.min ? '1' : '0'); if (this.min) this.modes = false; } }
       else if (act === 'row') this.open = this.open === id ? null : id;
       else if (act === 'inv') { const o = this.live(id); if (o) sendInvite(o, a.getAttribute('data-k')); }
       else if (act === 'join') { const o = this.live(id); if (o) joinBattle(o); }
@@ -598,6 +604,13 @@
       const r = cv.getBoundingClientRect(), k = r.width / CW_;
       const s = this.el.style;
       s.left = Math.round(r.left + g.x * k) + 'px'; s.width = Math.round(g.w * k) + 'px';
+      this.compact = !g.bottomUp && g.h * k < 100;
+      if (this.compact && this.sheet) {
+        const top = Math.max(6, r.top + 6), w = Math.max(g.w * k, Math.min(400, window.innerWidth * .52));
+        s.top = Math.round(top) + 'px'; s.bottom = ''; s.height = Math.round(Math.min(window.innerHeight, r.bottom) - top - 6) + 'px'; s.maxHeight = ''; s.width = Math.round(w) + 'px';
+        return true;
+      }
+      if (this.compact) { s.bottom = ''; s.top = Math.round(r.top + g.y * k) + 'px'; s.height = ''; s.maxHeight = ''; return true; }
       if (g.bottomUp) { s.top = ''; s.bottom = Math.round(window.innerHeight - (r.top + g.y * k)) + 'px'; s.maxHeight = Math.round(g.h * k) + 'px'; s.height = ''; }
       else { s.bottom = ''; s.top = Math.round(r.top + g.y * k) + 'px'; s.height = this.min ? '' : Math.round(g.h * k) + 'px'; s.maxHeight = ''; }
       return true;
@@ -606,10 +619,12 @@
       this.build(); if (!this.el) return;
       const S = G(() => st), P = G(() => hpg), tbx = !!G(() => TBX);
       if (P !== 'modes') this.modes = false;
+      if (P !== this.lastPage) { if (this.lastPage) this.sheet = false; this.lastPage = P; }
       const want = S === 0 && !ov && !tbx && !G(() => INTRO.on) && (P === 'main' || (P === 'modes' && this.modes));
       if (!want || !this.place()) { this.el.style.display = 'none'; return; }
       this.el.style.display = '';
-      this.el.classList.toggle('min', this.min);
+      this.el.classList.toggle('min', this.compact ? !this.sheet : this.min);
+      this.el.classList.toggle('sheet', !!(this.compact && this.sheet));
       this.render();
     },
     render(force) {
@@ -620,8 +635,8 @@
       const T = this.el.querySelectorAll('.tab');
       T[0].className = 'tab' + (this.tab === 'online' ? ' on' : ''); T[0].textContent = 'ONLINE · ' + L.length;
       T[1].className = 'tab' + (this.tab === 'friends' ? ' on' : ''); T[1].textContent = 'FRIENDS · ' + onF + '/' + FR.list.length;
-      this.el.querySelector('.mn').textContent = this.min ? '▴' : '▾';
-      this.el.querySelector('.add').style.display = me && this.tab === 'friends' && !this.min ? '' : 'none';
+      this.el.querySelector('.mn').textContent = (this.compact ? !this.sheet : this.min) ? '▴' : '▾';
+      this.el.querySelector('.add').style.display = me && this.tab === 'friends' && !(this.compact ? !this.sheet : this.min) ? '' : 'none';
       let h = '', ft = '';
       const acts = (o, fr) => {
         if (this.open !== (o.uid || o.peer)) return '';
