@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.3.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.4.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -211,7 +211,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.3.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
+  window.ASKIIES_MP = { version: '1.4.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
@@ -474,30 +474,26 @@
     if (cur !== csSynced) setDisplay(cur);
   }, 1000);
 
-  // ------------------------------------------------------------------ native game pages: ONLINE · FRIENDS · pilot · ACCOUNT & SAVES
-  // Built on the game's own menu system (PAGES / goPage / MENUOWN / logPanel), so they look and
-  // behave like every other hangar page: arrow keys + Enter, < BACK and Esc, the right-hand panel.
-  const NAV = { psel: null, cache: {}, landed: false };
-  const isMine = p => p === 'online' || p === 'friends' || p === 'pilot';
+  // ------------------------------------------------------------------ ONE pilots list
+  // Shown as a [ PILOTS ONLINE ] section in the main hangar's right-hand panel (drawn with the game's
+  // own text kit). Clicking a pilot, or the BATTLE page's MULTIPLAYER box, opens the PILOTS window:
+  // everyone online, your friends, and per-pilot INVITE / JOIN THEIR BATTLE / ADD or REMOVE FRIEND.
+  // Account & saves stay on the game's own ACCOUNT & SAVES page (OPTIONS ▸ ACCOUNT & SAVES).
+  const NAV = { cache: {} };
   function uiChanged() {
     // signed out / offline: the game's cloud-save status would wait on 'boot' forever; show it as local.
     // (Its pending cloudBoot resumes by itself the moment the player signs in.)
     if (!me) { const C = G(() => CLD); if (C && C.st === 'boot') { C.st = 'local'; C.err = ''; } }
-    // after signing in, land on the ONLINE page once per visit
-    if (!me || NAV.landed || ov) return;
-    if (G(() => st) !== 0 || G(() => hpg) !== 'main' || G(() => INTRO.on)) return;
-    NAV.landed = true;
-    try { goPage('online'); } catch (e) {}
+    if (PW.el) PW.render();
   }
   setInterval(uiChanged, 700);
-  setInterval(() => { if (me && isMine(G(() => hpg)) && Date.now() - FR.t > 8000) frLoad(); }, 2000);
+  setInterval(() => { if (me && (PW.el || (G(() => st) === 0 && G(() => hpg) === 'main')) && Date.now() - FR.t > 8000) frLoad(); }, 2000);
 
   function cached(key, fn) {
     const c = NAV.cache[key], now = Date.now();
     if (c && now - c.t < 400) return c.rows;
     const rows = fn(); NAV.cache[key] = { t: now, rows }; return rows;
   }
-  function openPilot(o) { NAV.psel = o; try { snd('ok'); } catch (e) {} goPage('pilot'); }
   function addFriendPrompt() {
     try { askText('Add a friend', '', v => frAdd({ callsign: v }), { max: 14, keep: 1, hint: 'Their login callsign or display callsign · ENTER to add' }); } catch (e) {}
   }
@@ -505,58 +501,175 @@
     try { askText('Your display callsign', me ? me.display : '', v => setDisplay(v), { max: 14, keep: 1, hint: 'What other pilots see in lobbies, battles and on the leaderboard' }); } catch (e) {}
   }
   const BACK = d => ({ l: '< BACK', go: 'main', d: d || 'Back.' });
-  const pilotRow = (o, from) => {
-    const fr = o.uid && FR.ids.has(o.uid);
-    return { l: (fr ? '★ ' : '● ') + o.cs, a: () => openPilot(Object.assign({ from }, o)), d: () => doing(o.l).t + (fr ? ' · FRIEND' : '') + '. ENTER: invite to a match' + (o.uid && !fr ? ' or add as a friend.' : '.') };
+  const shortDoing = l => {
+    if (!l || !l.st) return { t: 'ONLINE', c: '' };
+    const mode = G(() => CAMN[l.k]) || '';
+    if (l.st === 'battle') return { t: 'BATTLE' + (mode ? ' · ' + mode.replace(/ BATTLES?$/, '') : ''), c: 'bt' };
+    if (l.st === 'q') return { t: 'SEARCHING', c: 'q' };
+    if (l.st === 'solo') return { t: 'FLYING SOLO', c: '' };
+    return { t: 'HANGAR', c: '' };
+  };
+  function battleOf(o) {
+    if (!o || !o.l || o.l.st !== 'battle' || !o.l.room) return null;
+    return (G(() => mpBattles()) || []).find(b => b.room === o.l.room) || null;
+  }
+  function joinBattle(o) {
+    const b = battleOf(o);
+    if (!b) { toast('THAT BATTLE IS NOT OPEN TO JOIN', HY); return; }
+    PW.close();
+    try { if (G(() => st) !== 0) toHangar(); mpJoin(b); } catch (e) { toast('COULD NOT JOIN', HR); }
+  }
+
+  // ---------------------------------------------------------------- the PILOTS window (game text-box style)
+  const PW_CSS = `
+  #amp-pw{position:fixed;inset:0;z-index:99998;display:flex;align-items:flex-start;justify-content:center;background:rgba(0,8,6,.6);
+    padding:max(6vh,env(safe-area-inset-top)) 12px 12px;box-sizing:border-box;font-family:"Share Tech Mono",ui-monospace,monospace;color:#f2fff8}
+  #amp-pw .bx{width:min(560px,92vw);max-height:84vh;display:flex;flex-direction:column;background:rgba(4,22,20,.96);border:1px solid #74ffb8;box-shadow:0 0 24px rgba(116,255,184,.25);box-sizing:border-box}
+  #amp-pw .hd{display:flex;justify-content:space-between;align-items:baseline;padding:12px 16px 8px;color:#74ffb8;font-size:13px;letter-spacing:2px}
+  #amp-pw .hd small{color:rgba(242,255,248,.5);letter-spacing:1px;font-size:11px}
+  #amp-pw .ls{overflow:auto;padding:0 8px 6px}
+  #amp-pw .sec{color:rgba(116,255,184,.7);font-size:10px;letter-spacing:2px;padding:10px 8px 4px}
+  #amp-pw .r{display:flex;align-items:center;gap:10px;width:100%;box-sizing:border-box;text-align:left;background:transparent;border:1px solid transparent;color:#f2fff8;font:inherit;font-size:14px;padding:7px 8px;cursor:pointer}
+  #amp-pw .r:hover,#amp-pw .r:focus{background:rgba(116,255,184,.12);border-color:rgba(116,255,184,.45);outline:none}
+  #amp-pw .r .n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;letter-spacing:1px}
+  #amp-pw .r .s{font-size:11px;color:#7dffa8;white-space:nowrap}
+  #amp-pw .r .s.bt{color:#ffb36a}#amp-pw .r .s.q{color:#ffd36a}#amp-pw .r .s.off{color:rgba(242,255,248,.35)}
+  #amp-pw .r.dim .n{color:rgba(242,255,248,.5)}
+  #amp-pw .em{color:rgba(242,255,248,.55);font-size:12px;padding:8px}
+  #amp-pw .act{display:block;width:100%;box-sizing:border-box;text-align:left;margin:6px 0 0;padding:9px 12px;font:inherit;font-size:14px;letter-spacing:1px;cursor:pointer;
+    background:#122a2a;color:#cfe;border:1px solid rgba(116,255,184,.35)}
+  #amp-pw .act small{display:block;color:rgba(242,255,248,.5);font-size:11px;letter-spacing:0;margin-top:2px}
+  #amp-pw .act.go{background:#2f9f5a;color:#fff;border-color:#74ffb8}
+  #amp-pw .act:hover,#amp-pw .act:focus{border-color:#74ffb8;outline:none;filter:brightness(1.15)}
+  #amp-pw .ft{display:flex;gap:10px;justify-content:flex-end;padding:10px 16px 12px;border-top:1px solid rgba(116,255,184,.2)}
+  #amp-pw .ft button{font:inherit;font-size:14px;padding:8px 18px;cursor:pointer;background:#122a2a;color:#cfe;border:1px solid rgba(116,255,184,.35)}
+  #amp-pw .ft button.go{background:#2f9f5a;color:#fff;border-color:#74ffb8}`;
+  const PW = {
+    el: null, sel: null, last: '',
+    open(sel) {
+      if (!document.body) return;
+      if (!document.getElementById('amp-pwcss')) { const s = document.createElement('style'); s.id = 'amp-pwcss'; s.textContent = PW_CSS; document.head.appendChild(s); }
+      if (document.pointerLockElement) try { document.exitPointerLock(); } catch (e) {}
+      if (!this.el) {
+        this.el = el('<div id="amp-pw"><div class="bx"><div class="hd"></div><div class="ls"></div><div class="ft"></div></div></div>');
+        shield(this.el);
+        this.el.addEventListener('click', e => this.click(e));
+        this.el.addEventListener('keydown', e => this.key(e));
+        document.body.appendChild(this.el);
+      }
+      this.sel = sel || null; this.last = '';
+      if (me && Date.now() - FR.t > 3000) frLoad();
+      try { snd('ui'); } catch (e) {}
+      this.render(true);
+    },
+    close() { if (this.el) { this.el.remove(); this.el = null; this.sel = null; } },
+    key(e) {
+      if (e.key === 'Escape') { e.preventDefault(); if (this.sel) { this.sel = null; this.render(true); } else this.close(); return; }
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const B = [...this.el.querySelectorAll('button')], i = B.indexOf(document.activeElement);
+        const n = B[(i + (e.key === 'ArrowDown' ? 1 : -1) + B.length) % B.length]; if (n) n.focus();
+      }
+    },
+    click(e) {
+      if (e.target === this.el) { this.close(); return; }
+      const a = e.target.closest('[data-a]'); if (!a) return;
+      const act = a.getAttribute('data-a'), id = a.getAttribute('data-id');
+      const L = pilots();
+      if (act === 'close') this.close();
+      else if (act === 'back') { this.sel = null; this.render(true); }
+      else if (act === 'pick') {
+        const o = L.find(p => p.uid === id || p.peer === id);
+        const f = FR.list.find(x => x.id === id) || FR.addedMe.find(x => x.id === id);
+        this.sel = o ? { uid: o.uid, peer: o.peer, cs: o.cs } : f ? { uid: f.id, cs: f.display, last: f.last } : null;
+        this.render(true);
+      }
+      else if (act === 'inv') { const o = this.live(); if (o) { sendInvite(o, a.getAttribute('data-k')); this.render(true); } }
+      else if (act === 'join') { const o = this.live(); if (o) joinBattle(o); }
+      else if (act === 'fadd') frAdd({ id }).then(() => this.render(true));
+      else if (act === 'frem') frRemove(id, this.sel ? this.sel.cs : 'this pilot').then(() => this.render(true));
+      else if (act === 'add') { this.close(); addFriendPrompt(); }
+      else if (act === 'signin') { this.close(); showLogin(); }
+      else if (act === 'reg') { this.close(); showLogin(null, 'register'); }
+    },
+    live() { const s = this.sel; if (!s) return null; const L = pilots(); return (s.uid && L.find(p => p.uid === s.uid)) || L.find(p => p.peer === s.peer) || null; },
+    render(force) {
+      if (!this.el) return;
+      if (!force && this.el.contains(document.activeElement) && document.activeElement !== document.body && this.sel) return;
+      let hd = '', ls = '', ft = '';
+      if (!me) {
+        hd = 'PILOTS ONLINE';
+        ls = '<div class="em">Sign in to see who is online, keep a friends list, invite pilots to matches and join their battles. Your progress also syncs to your account.</div>';
+        ft = '<button data-a="close">CLOSE</button><button data-a="reg">CREATE A PILOT</button><button class="go" data-a="signin">SIGN IN</button>';
+      } else if (this.sel) {
+        const s = this.sel, o = this.live(), fr = s.uid && FR.ids.has(s.uid), d = o ? doing(o.l) : null;
+        hd = esc(s.cs) + ' <small>' + (o ? esc(d.t) : 'OFFLINE' + (s.last ? ' · ' + ago(s.last) : '')) + (fr ? ' · ★ FRIEND' : '') + '</small>';
+        if (o) {
+          const pend = INV.out && INV.out.to === o.peer, b = battleOf(o);
+          if (b) ls += `<button class="act go" data-a="join">JOIN THEIR BATTLE<small>${esc(doing(o.l).t)} · you go on the team with fewer pilots</small></button>`;
+          else if (o.l && o.l.st === 'battle') ls += '<div class="em">Their battle is full or private, so it cannot be joined. Invite them once they are back in the hangar.</div>';
+          for (const k of ['d1', 'air', 'sq'])
+            ls += `<button class="act${!b && k === 'd1' ? ' go' : ''}" data-a="inv" data-k="${k}">${pend ? 'INVITE SENT · WAITING…' : 'INVITE · ' + MODES[k].name}<small>${esc(MODES[k].d)}${o.l && o.l.st === 'battle' ? ' Accepting takes them out of their battle.' : ''}</small></button>`;
+        } else ls += '<div class="em">Not online right now. Invites need them online.</div>';
+        if (s.uid) ls += fr ? `<button class="act" data-a="frem" data-id="${esc(s.uid)}">REMOVE FRIEND</button>` : `<button class="act" data-a="fadd" data-id="${esc(s.uid)}">ADD FRIEND</button>`;
+        ft = '<button data-a="back">‹ BACK</button><button data-a="close">CLOSE</button>';
+      } else {
+        const L = pilots(), fl = L.filter(o => o.uid && FR.ids.has(o.uid)), ot = L.filter(o => !(o.uid && FR.ids.has(o.uid)));
+        const live = new Set(L.map(o => o.uid)), offF = FR.list.filter(f => !live.has(f.id)), am = FR.addedMe.filter(f => !FR.ids.has(f.id));
+        hd = 'PILOTS ONLINE · ' + L.length + ' <small>SIGNED IN AS ' + esc(me.display) + '</small>';
+        const row = (o, star) => { const d = shortDoing(o.l); return `<button class="r" data-a="pick" data-id="${esc(o.uid || o.peer)}"><span class="n">${star ? '★ ' : '● '}${esc(o.cs)}</span><span class="s ${d.c}">${esc(d.t)}</span></button>`; };
+        if (uiState !== 'online') ls += '<div class="em">Reconnecting to the server…</div>';
+        if (fl.length) { ls += '<div class="sec">FRIENDS ONLINE</div>'; fl.forEach(o => ls += row(o, 1)); }
+        ls += '<div class="sec">' + (fl.length ? 'EVERYONE ELSE' : 'ONLINE') + '</div>';
+        if (ot.length) ot.forEach(o => ls += row(o, 0)); else ls += '<div class="em">' + (L.length ? 'Only friends are online.' : 'Nobody else is online right now.') + '</div>';
+        if (am.length) { ls += '<div class="sec">ADDED YOU</div>'; am.forEach(f => ls += `<button class="r" data-a="pick" data-id="${esc(f.id)}"><span class="n">+ ${esc(f.display)}</span><span class="s">ADD BACK ›</span></button>`); }
+        if (offF.length) { ls += '<div class="sec">FRIENDS OFFLINE</div>'; offF.forEach(f => ls += `<button class="r dim" data-a="pick" data-id="${esc(f.id)}"><span class="n">○ ${esc(f.display)}</span><span class="s off">${esc(f.last ? ago(f.last) : 'OFFLINE')}</span></button>`); }
+        ft = '<button data-a="add">+ ADD FRIEND</button><button class="go" data-a="close">CLOSE</button>';
+      }
+      const key = hd + ls + ft;
+      if (key === this.last) return;
+      const foc = document.activeElement && this.el.contains(document.activeElement) ? [document.activeElement.getAttribute('data-a'), document.activeElement.getAttribute('data-id'), document.activeElement.getAttribute('data-k')] : null;
+      this.last = key;
+      this.el.querySelector('.hd').innerHTML = hd; this.el.querySelector('.ls').innerHTML = ls; this.el.querySelector('.ft').innerHTML = ft;
+      let f = null;
+      if (foc) f = [...this.el.querySelectorAll('button')].find(b => b.getAttribute('data-a') === foc[0] && b.getAttribute('data-id') === foc[1] && b.getAttribute('data-k') === foc[2]);
+      (f || this.el.querySelector('.ls button, .ft button.go')) && setTimeout(() => { try { (f || this.el.querySelector('.ls button, .ft button.go')).focus(); } catch (e) {} }, 0);
+    }
   };
 
-  function onlineRows() {
-    const R = [BACK('Back to the hangar.')];
-    if (!me) {
-      R.push({ l: 'SIGN IN', a: () => showLogin(), d: 'Sign in with your login callsign and password to see who is online, keep a friends list and invite people to matches.' },
-        { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? You need the invite code from whoever runs this server.' },
-        { l: 'ACCOUNT & SAVES', go: 'acct', d: 'Save files: export, import, copy or paste a save code. Works without an account.' });
-      return R;
+  // ---------------------------------------------------------------- [ PILOTS ONLINE ] in the main hangar panel
+  // The game draws the aircraft panel with local layout maths; we note the lowest text it drew in that
+  // column and continue the panel below [ SP WEAPON ] in the same style.
+  const CAP = { on: 0, x0: 0, x1: 0, ymax: 0, ylim: 0 };
+  function drawPilotsSection() {
+    const w = CW_, h = CH_, Rr = w - SA.r - 16, pw = Math.min(300 * UF, w * .33), px = Rr - pw, yb = h - SA.b - 24 * UF;
+    const lim = yb - 40 * UF, rh = 15 * UF;
+    let y = Math.max(CAP.ymax + 22 * UF, SA.t + 120 * UF);
+    if (y > lim - 6 * UF) y = lim - 6 * UF;                       // tiny screens: header line only
+    const L = me ? pilots() : [];
+    const fl = L.filter(o => o.uid && FR.ids.has(o.uid)), ot = L.filter(o => !(o.uid && FR.ids.has(o.uid)));
+    const list = fl.concat(ot), am = me ? FR.addedMe.filter(f => !FR.ids.has(f.id)).length : 0;
+    const nRows = !me || uiState !== 'online' || !list.length ? 1 : Math.min(list.length, Math.max(0, Math.floor((lim - y - rh) / rh) + 1));
+    U.shadowBlur = 0; U.fillStyle = 'rgba(3,14,18,.62)'; U.fillRect(px - 10, y - 14 * UF, pw + 20, rh * (nRows + 1) + 8 * UF); U.shadowBlur = 3;
+    tx(me ? '[ PILOTS ONLINE · ' + L.length + ' ]' : '[ PILOTS ONLINE ]', px, y, HGd, 'left', 11);
+    const right = !me ? 'SIGN IN ›' : am ? '+' + am + ' ADDED YOU ›' : 'ALL · FRIENDS ›';
+    tx(right, px + pw, y, am ? HY : HG, 'right', 10, 1);
+    hits.push({ x: px - 6, y: y - 12 * UF, w: pw + 12, h: 16 * UF, fn: () => { if (me) PW.open(); else showLogin(); } });
+    y += rh;
+    if (!me) { if (y < lim) { tx('Sign in to see who is online and fly with friends.', px, y, HW, 'left', 10); } return; }
+    if (uiState !== 'online') { if (y < lim) tx('RECONNECTING…', px, y, HY, 'left', 10); return; }
+    if (!list.length) { if (y < lim) tx('Nobody else online right now.', px, y, HW, 'left', 10); return; }
+    const fit = Math.max(0, Math.floor((lim - y) / rh) + 1);
+    const show = list.length > fit ? list.slice(0, Math.max(0, fit - 1)) : list;
+    for (const o of show) {
+      const fr = o.uid && FR.ids.has(o.uid), d = shortDoing(o.l);
+      tx((fr ? '★ ' : '● ') + o.cs, px, y, fr ? HG : HW, 'left', 10, fr ? 1 : 0);
+      tx(d.t, px + pw, y, d.c === 'bt' ? '#ffb36a' : d.c === 'q' ? HY : HGd, 'right', 9);
+      const sel = { uid: o.uid, peer: o.peer, cs: o.cs };
+      hits.push({ x: px - 6, y: y - 11 * UF, w: pw + 12, h: rh, fn: () => PW.open(sel) });
+      y += rh;
     }
-    const L = pilots(), onF = L.filter(o => o.uid && FR.ids.has(o.uid)).length;
-    R.push({ l: 'FRIENDS · ' + onF + ' / ' + FR.list.length + ' ONLINE', go: 'friends', d: 'Your friends list: who is online, what they are doing, and invites.' + (FR.addedMe.filter(f => !FR.ids.has(f.id)).length ? ' Someone added you: add them back there.' : '') },
-      { l: 'ADD A FRIEND', a: addFriendPrompt, d: 'Type a pilot\'s callsign to add them to your friends list.' },
-      { l: 'ACCOUNT & SAVES', go: 'acct', d: 'Your callsign, cloud save, save files, sign out.' });
-    if (uiState !== 'online') R.push({ l: 'RECONNECTING…', a: () => toast('RECONNECTING TO THE SERVER…', HY), d: 'Lost the connection to the server. Retrying automatically.' });
-    else if (!L.length) R.push({ l: 'NOBODY ELSE ONLINE', a: () => toast('NOBODY ELSE IS ONLINE RIGHT NOW', HY), d: 'Pilots appear here the moment they open the game and sign in.' });
-    for (const o of L) R.push(pilotRow(o, 'online'));
-    return R;
-  }
-  function friendRows() {
-    const R = [{ l: '< BACK', go: 'main', d: 'Back to ONLINE.' }, { l: 'ADD A FRIEND', a: addFriendPrompt, d: 'Type a pilot\'s callsign to add them to your friends list.' }];
-    const live = new Map(pilots().filter(o => o.uid).map(o => [o.uid, o]));
-    for (const f of FR.list) {
-      const o = live.get(f.id);
-      if (o) R.push(pilotRow(o, 'friends'));
-      else R.push({ l: '○ ' + f.display, a: () => openPilot({ from: 'friends', off: 1, uid: f.id, cs: f.display, last: f.last }), d: 'OFFLINE' + (f.last ? ' · ' + ago(f.last) : '') + '. ENTER: options.' });
-    }
-    for (const f of FR.addedMe.filter(f => !FR.ids.has(f.id)))
-      R.push({ l: '+ ' + f.display + ' · ADDED YOU', a: () => frAdd({ id: f.id }), d: f.display + ' added you as a friend. ENTER: add them back.' });
-    if (!FR.list.length && R.length === 2) R.push({ l: 'NO FRIENDS YET', a: addFriendPrompt, d: 'Add pilots from the ONLINE page, or type their callsign with ADD A FRIEND.' });
-    return R;
-  }
-  function pilotRows() {
-    const o0 = NAV.psel, R = [BACK('Back.')];
-    if (!o0) return R;
-    // follow the pilot if they reconnect (new peer id) or go offline
-    const o = (o0.uid && pilots().find(p => p.uid === o0.uid)) || pilots().find(p => p.peer === o0.peer) || null;
-    const fr = o0.uid && FR.ids.has(o0.uid);
-    if (o) {
-      const pend = INV.out && INV.out.to === o.peer;
-      for (const k of ['d1', 'air', 'sq'])
-        R.push({ l: (pend ? '… ' : 'INVITE · ') + MODES[k].name, a: () => pend ? toast('WAITING FOR ' + o.cs + ' TO ANSWER', HY) : sendInvite(o, k), d: MODES[k].d + (o.l && o.l.st === 'battle' ? ' They are in a battle: accepting takes them out of it.' : '') });
-    }
-    if (o0.uid) {
-      if (fr) R.push({ l: 'REMOVE FRIEND', a: () => frRemove(o0.uid, o0.cs), d: 'Take ' + o0.cs + ' off your friends list.' });
-      else R.push({ l: 'ADD FRIEND', a: () => frAdd({ id: o0.uid }), d: 'Add ' + o0.cs + ' to your friends list.' });
-    }
-    if (!o) R.push({ l: 'OFFLINE', a: () => toast(o0.cs + ' IS OFFLINE', HY), d: o0.cs + ' is not online right now' + (o0.last ? ' (' + ago(o0.last).toLowerCase() + ')' : '') + '. Invites need them online.' });
-    return R;
+    if (show.length < list.length) { tx('+' + (list.length - show.length) + ' MORE ›', px, y, HG, 'left', 10, 1); hits.push({ x: px - 6, y: y - 11 * UF, w: pw + 12, h: rh, fn: () => PW.open() }); }
   }
 
   // ACCOUNT & SAVES: replaces the claude.ai account page; save transfer folded in
@@ -577,47 +690,6 @@
     return R;
   }
 
-  // right-hand panels (same drawing kit as the game's own account / update-log panels)
-  function sidePanel(px, T) {
-    const pw = rpanel(px, T); let y = T + 24 * UF;
-    const head = t => { tx(t, px, y, HG, 'left', 14, 1); y += 24 * UF; };
-    const row = (a, b, c, d) => { tx(a, px, y, c || HW, 'left', 11, 1); if (b) { y += 13 * UF; tx(b, px + 10 * UF, y, d || HGd, 'left', 9.5); } y += 18 * UF; };
-    const para = s => { wrapT(s, pw, 10).forEach(l => { tx(l, px, y, HW, 'left', 10); y += 13 * UF; }); y += 6 * UF; };
-    const maxY = CH_ - SA.b - 48 * UF;
-    if (!me) { head('[ ONLINE ]'); para('Sign in to see who is online, keep a friends list and invite pilots to duels, team-ups and squadron attacks. Your progress also syncs to your account.'); return; }
-    if (hpg === 'pilot' && NAV.psel) {
-      const o0 = NAV.psel, o = (o0.uid && pilots().find(p => p.uid === o0.uid)) || null, fr = o0.uid && FR.ids.has(o0.uid);
-      head('[ ' + o0.cs + ' ]');
-      const d = o ? doing(o.l) : { t: 'OFFLINE' + (o0.last ? ' · ' + ago(o0.last) : ''), c: 'off' };
-      row('STATUS', d.t, HGd, d.c === 'bt' ? HR : d.c === 'q' ? HY : o ? HG : HGd);
-      row('FRIEND', fr ? 'ON YOUR FRIENDS LIST' : 'NOT ON YOUR LIST', HGd, fr ? HG : HGd);
-      if (INV.out && o && INV.out.to === o.peer) row('INVITE', 'SENT · WAITING FOR AN ANSWER', HGd, HY);
-      y += 6 * UF; para('Invites are jet matches on an air-battle map. They get a pop-up with ACCEPT (Y) and DECLINE (N) and 30 seconds to answer.');
-      return;
-    }
-    const L = pilots();
-    if (hpg === 'friends') {
-      const live = new Set(L.map(o => o.uid));
-      head('[ FRIENDS · ' + FR.list.filter(f => live.has(f.id)).length + ' / ' + FR.list.length + ' ONLINE ]');
-      if (!FR.list.length) para('No friends yet. Pick a pilot on the ONLINE page and choose ADD FRIEND, or use ADD A FRIEND with their callsign.');
-      for (const f of FR.list) {
-        if (y > maxY) break;
-        const o = L.find(p => p.uid === f.id), d = o ? doing(o.l) : null;
-        row((o ? '● ' : '○ ') + f.display, o ? d.t : 'OFFLINE' + (f.last ? ' · ' + ago(f.last) : ''), o ? HW : HGd, o ? (d.c === 'bt' ? HR : d.c === 'q' ? HY : HG) : HGd);
-      }
-      return;
-    }
-    head('[ PILOTS ONLINE · ' + L.length + ' ]');
-    if (uiState !== 'online') { para('Reconnecting to the server…'); return; }
-    if (!L.length) para('Nobody else is online right now. Pilots appear here the moment they open the game and sign in.');
-    for (const o of L) {
-      if (y > maxY) break;
-      const d = doing(o.l), fr = o.uid && FR.ids.has(o.uid);
-      row((fr ? '★ ' : '● ') + o.cs, d.t, HW, d.c === 'bt' ? HR : d.c === 'q' ? HY : HG);
-    }
-    y += 6 * UF;
-    if (y < maxY) para('SIGNED IN AS ' + me.display + '. Pick a pilot to invite them or add them as a friend.');
-  }
   function acctPanel2(px, T) {
     const pw = rpanel(px, T); let y = T + 24 * UF;
     const L = (a, b, c) => { tx(a, px, y, HGd, 'left', 10, 1); tx(String(b), px + pw, y, c || HW, 'right', 11, 1); y += 18 * UF; };
@@ -635,66 +707,59 @@
       : 'Progress is saved on this device. Sign in to keep it in the cloud, or use EXPORT SAVE FILE to back it up and IMPORT SAVE FILE to load it elsewhere.', pw, 10).forEach(l => { tx(l, px, y, HW, 'left', 10); y += 13 * UF; });
   }
 
+
   addEventListener('load', () => {
     try {
-      PAGES.online = { t: 'ONLINE', get rows() { return cached('online', onlineRows); } };
-      PAGES.friends = { t: 'FRIENDS', get rows() { return cached('friends', friendRows); } };
-      PAGES.pilot = { get t() { return NAV.psel ? NAV.psel.cs : 'PILOT'; }, get rows() { return cached('pilot', pilotRows); } };
       PAGES.acct = { t: 'ACCOUNT & SAVES', get rows() { return cached('acct', acctRows); } };
-      MENUOWN.friends = 'online';
-      for (const p of ['online', 'friends', 'pilot', 'acct']) { PGX[p] = 1; try { CAMP[p] = CAMP.log || CAMP.main; } catch (e) {} }
+      PGX.acct = 1;
       // parents that depend on where you came from
       const _g = goPage;
       goPage = function (p) {   // eslint-disable-line no-global-assign
         const from = G(() => hpg);
+        if (p === 'mpl') { PW.open(); return; }                     // one lobby: the PILOTS window
         if (p === 'acct' && from && from !== 'svt' && from !== 'acct') MENUOWN.acct = from === 'main' ? undefined : from;
-        if (p === 'pilot' && from && from !== 'pilot') MENUOWN.pilot = from === 'main' ? undefined : from;
         NAV.cache = {};
-        if (me && (isMine(p) || p === 'acct') && Date.now() - FR.t > 3000) frLoad();
         return _g.apply(this, arguments);
       };
       const _lp = logPanel;
       logPanel = function (px, T) {   // eslint-disable-line no-global-assign
-        if (isMine(hpg)) return sidePanel(px, T);
         if (hpg === 'acct') return acctPanel2(px, T);
         return _lp.apply(this, arguments);
       };
-      // ONLINE row on the hangar menu (hangar-menu.js puts it in place)
-      const R = PAGES.main.rows;
-      if (Array.isArray(R) && !R.some(r => r.amp)) {
-        R.splice(2, 0, {
-          amp: 1, go: 'online',
-          get l() { return !me ? 'ONLINE · SIGN IN' : 'ONLINE · ' + pilots().length + (FR.list.length ? ' · ★ ' + pilots().filter(o => o.uid && FR.ids.has(o.uid)).length : ''); },
-          d: () => !me ? 'Sign in to see who is online, keep a friends list and invite pilots to matches.'
-            : 'Who is online and what they are doing, your friends list, invites, and your account & saves.'
-        });
-      }
-    } catch (e) { console.warn('[mp] could not build the online pages', e); }
-    // INVITE buttons on BATTLE ▸ MULTIPLAYER's own player list open the pilot page
-    const orig = G(() => mplUI);
-    if (typeof orig !== 'function') return;
-    try {
-      mplUI = function () {   // eslint-disable-line no-global-assign
-        const r = orig.apply(this, arguments);
+      // main hangar: note how far down the aircraft panel went, then add [ PILOTS ONLINE ] below it.
+      // BATTLE page: the MULTIPLAYER box opens the same PILOTS window.
+      const _tx = tx;
+      tx = function (s, x, y) {   // eslint-disable-line no-global-assign
+        if (CAP.on && x >= CAP.x0 && x <= CAP.x1 && y < CAP.ylim && y > CAP.ymax) CAP.ymax = y;
+        return _tx.apply(this, arguments);
+      };
+      const _hu = hangarUI;
+      hangarUI = function () {   // eslint-disable-line no-global-assign
+        const main = G(() => st) === 0 && hpg === 'main' && !G(() => INTRO.on);
+        if (main) {
+          const w = CW_, Rr = w - SA.r - 16, pw = Math.min(300 * UF, w * .33);
+          CAP.on = 1; CAP.x0 = Rr - pw - 4; CAP.x1 = Rr + 4; CAP.ymax = 0; CAP.ylim = CH_ - SA.b - 64 * UF;
+        }
+        let r;
+        try { r = _hu.apply(this, arguments); } finally { CAP.on = 0; }
         try {
-          if (!me || !MP_.on) return r;
-          const w = CW_, h = CH_, L = SA.l + 14 * UF, Rr = w - SA.r - 14 * UF, T = SA.t + 10 * UF, y0 = T + 34 * UF, y1 = h - SA.b - 44 * UF, cw = (Rr - L) * .42;
-          const list = mpPeers(); list.sort((a, b) => (b.me ? 1 : 0) - (a.me ? 1 : 0));
-          const rows = Math.max(1, Math.floor((y1 - y0 - 24 * UF) / (26 * UF)));
-          list.slice(0, rows).forEach((p, i) => {
-            if (p.me) return;
-            const y = y0 + 24 * UF + i * 26 * UF, bw = 46 * UF, bh = 15 * UF, bx = L + cw - 12 * UF - bw, by = y + 4 * UF;
-            const pend = INV.out && INV.out.to === p.peer;
-            U.fillStyle = pend ? 'rgba(160,130,40,.75)' : 'rgba(47,159,90,.9)'; U.fillRect(bx, by, bw, bh);
-            tx(pend ? 'INVITED' : 'INVITE', bx + bw / 2, by + 10.5 * UF, '#fff', 'center', 7, 1);
-            if (!pend) hits.push({ x: bx, y: by, w: bw, h: bh, fn: () => { const o = pilots().find(q => q.peer === p.peer); if (o) openPilot(Object.assign({ from: 'mpl' }, o)); } });
-          });
+          if (main) drawPilotsSection();
+          if (hpg === 'modes') {
+            const Lx = SA.l + 16, by = CH_ - SA.b - 38 * UF, bw = 150 * UF, bh = 26 * UF;
+            const q = hits.find(q => Math.abs(q.x - Lx) < 2 && Math.abs(q.y - by) < 2 && Math.abs(q.w - bw) < 2);
+            if (q) {
+              q.fn = () => { try { snd('ui'); } catch (e) {} PW.open(); };
+              const n = me ? pilots().length : 0;
+              U.shadowBlur = 0; U.fillStyle = 'rgb(16,58,42)'; U.fillRect(Lx, by, bw, bh); U.strokeStyle = '#7dffa8'; U.strokeRect(Lx + .5, by + .5, bw - 1, bh - 1);
+              _tx(me ? 'PILOTS ONLINE · ' + n : 'PILOTS · SIGN IN', Lx + bw / 2, by + 12 * UF, '#eafff2', 'center', 9, 1);
+              _tx(me ? 'INVITE · JOIN FRIENDS' : 'TO PLAY WITH FRIENDS', Lx + bw / 2, by + 22 * UF, '#a8d8c0', 'center', 7, 1);
+            }
+          }
         } catch (e) {}
         return r;
       };
-    } catch (e) {}
+    } catch (e) { console.warn('[mp] could not hook the hangar', e); }
   });
-
   if (document.readyState === 'loading') addEventListener('DOMContentLoaded', () => boot(), { once: true });
   else boot();
 })();

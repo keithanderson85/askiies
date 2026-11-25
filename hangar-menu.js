@@ -27,11 +27,12 @@
     [/ON THIS PAGE NOW/g, 'ONLINE NOW'],
     [/ON THIS PAGE/g, 'ONLINE'],
     [/OPTIONS ▸ SAVE TRANSFER/g, 'OPTIONS ▸ ACCOUNT & SAVES'],
+    [/BATTLE ▸ MULTIPLAYER TO JOIN/g, 'PICK THE SAME MODE IN BATTLE TO JOIN'],
     [/ and some app views do not offer it\.?/g, '.'],
     [/\bClaude\b/g, 'ASKIIES']
   ];
   const fix = s => { if (typeof s !== 'string' || s.length < 8) return s; for (const [a, b] of WORDS) s = s.replace(a, b); return s; };
-  const quick = s => typeof s === 'string' && s.length > 10 && (s.indexOf('Claude') >= 0 || s.indexOf('THIS PAGE') >= 0 || s.indexOf('SHARED LINK') >= 0 || s.indexOf('SAVE TRANSFER') >= 0);
+  const quick = s => typeof s === 'string' && s.length > 10 && (s.indexOf('Claude') >= 0 || s.indexOf('MULTIPLAYER TO JOIN') >= 0 || s.indexOf('THIS PAGE') >= 0 || s.indexOf('SHARED LINK') >= 0 || s.indexOf('SAVE TRANSFER') >= 0);
   try { if (typeof ULOG !== 'undefined') for (const u of ULOG) if (u && Array.isArray(u.notes)) u.notes = u.notes.map(fix); } catch (e) {}
   // HUD text, toasts and text-box hints are drawn from string literals inside the game: rewrite on the way out
   try { const _tx = tx; tx = function (s) { if (quick(s)) arguments[0] = fix(s); return _tx.apply(this, arguments); }; } catch (e) {}   // eslint-disable-line no-global-assign
