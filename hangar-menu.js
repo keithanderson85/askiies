@@ -1,4 +1,4 @@
-/* ASKIIES hangar menu reorganisation (hangar-menu.js v1.0.0)
+/* ASKIIES hangar menu reorganisation (hangar-menu.js v1.1.0)
  *
  * Loaded after the game (end of <body>). Pure data changes on the game's own menu system
  * (PAGES / HUB / MENUOWN), so every page keeps the game's look, keys and BACK behaviour:
@@ -192,6 +192,36 @@
     };
   } catch (e) {}
 
+  // Touchscreens and small windows (the game's MOBM() layout): the game's own full-screen pages send
+  // BACK to that layout's hubs (Campaign -> BATTLE, workshops -> MY JET, command pages -> COMMAND) and
+  // the hangar after any sortie is the BATTLE screen. This menu has one layout for everyone, so on those
+  // devices BACK from Campaign went to BATTLE (bug #26) and so did HANGAR after a campaign mission
+  // (bug #25). BACK now goes to the page's parent in this menu, and only battles return to BATTLE.
+  const MOB_HUBS = ['modes', 'mjet', 'mcmd', 'mfly'];
+  const isMob = () => { try { return typeof MOBM === 'function' && !!MOBM(); } catch (e) { return false; } };
+  try {
+    const _gp = goPage;
+    goPage = function (p) {   // eslint-disable-line no-global-assign
+      try {
+        if (isMob() && MOB_HUBS.includes(p) && typeof hpg !== 'undefined' && hpg !== p && typeof MENUOWN !== 'undefined') {
+          const own = MENUOWN[hpg];
+          if (own && own !== p && PAGES[own]) p = own;
+        }
+      } catch (e) {}
+      return _gp.apply(this, [p, ...[].slice.call(arguments, 1)]);
+    };
+  } catch (e) {}
+  try {
+    const _th = toHangar;
+    toHangar = function () {   // eslint-disable-line no-global-assign
+      let battle = false;
+      try { battle = typeof CA !== 'undefined' && !!CA.on; } catch (e) {}
+      const r = _th.apply(this, arguments);
+      try { if (!battle && isMob() && hpg === 'modes') goPage('main'); } catch (e) {}
+      return r;
+    };
+  } catch (e) {}
+
   if (document.readyState === 'complete') setup(); else addEventListener('load', setup);
-  window.ASKIIES_MENU = { version: '1.0.0' };
+  window.ASKIIES_MENU = { version: '1.1.0' };
 })();
