@@ -466,7 +466,7 @@ function renderPilots() {
   }
   $('pBody').innerHTML = h || `<tr><td colspan="${COLS.length}" class="empty">No pilots match.</td></tr>`;
   $('pBody').querySelectorAll('tr.pilot').forEach(tr => tr.onclick = () => { OPEN = OPEN === tr.dataset.id ? null : tr.dataset.id; renderPilots(); });
-  $('pBody').querySelectorAll('[data-act]').forEach(b => b.onclick = e => { e.stopPropagation(); act(b.dataset.act, b.dataset.id); });
+  $('pBody').querySelectorAll('[data-act]').forEach(b => b.onclick = e => { e.stopPropagation(); act(b.dataset.act, b.dataset.id, b.dataset.h); });
 }
 function detailRow(u) {
   const recs = Object.entries(u.records).map(([k, r]) => `${esc(REC[k] || k)} ${n(r.v)}${r.ac ? ' (' + esc(r.ac) + ')' : ''}`).join('<br>') || '—';
@@ -479,7 +479,7 @@ function detailRow(u) {
       <b>Last seen</b><span>${u.online ? 'online now, ' + u.tabs + ' tab' + (u.tabs > 1 ? 's' : '') + ', in ' + (u.rooms.map(r => esc(roomName(r))).join(', ') || 'menus') : esc(when(u.last))}</span>
       <b>Visits · sign-ins</b><span>${n(u.visits)} visits · ${n(u.logins)} password sign-ins</span>
       <b>Signed-in devices</b><span>${n(u.sessions)}</span>
-      <b>Last cloud save</b><span>${esc(when(u.save))}</span>
+      <b>Last cloud save</b><span>${esc(when(u.save))}${u.saveCopies ? ' · ' + u.saveCopies + ' earlier cop' + (u.saveCopies > 1 ? 'ies' : 'y') + ' kept' : ''}</span>
       <b>Records</b><span>${recs}</span>
       <b>Account id</b><span class="mono">${esc(u.id)}</span>
     </div>
@@ -487,12 +487,13 @@ function detailRow(u) {
       <button class="btn" data-act="resetpw" data-id="${esc(u.id)}">Reset password</button>
       <button class="btn" data-act="signout" data-id="${esc(u.id)}">Sign out everywhere</button>
       <button class="btn" data-act="display" data-id="${esc(u.id)}">Change shown name</button>
+      <button class="btn" data-act="saves" data-id="${esc(u.id)}">Cloud save copies…</button>
       <button class="btn danger" data-act="delete" data-id="${esc(u.id)}">Delete pilot…</button>
     </div>
     ${note ? `<div class="notice">${note}</div>` : ''}
   </td></tr>`;
 }
-async function act(a, id) {
+async function act(a, id, h) {
   const u = DATA.users.find(x => x.id === id); if (!u) return;
   try {
     if (a === 'resetpw') {
@@ -508,6 +509,17 @@ async function act(a, id) {
       if (d == null || !d.trim()) return;
       const j = await api('user', { id, action: 'display', display: d });
       NOTICE[id] = 'Now shown as <b>' + esc(j.display) + '</b>.';
+    } else if (a === 'saves') {
+      const j = await api('saves?uid=' + encodeURIComponent(id));
+      NOTICE[id] = j.saves.length ? '<b>Earlier copies of the cloud save</b> (newest first). Restoring one makes it the pilot's save on every device; the current save is kept as a copy first.<br>'
+        + j.saves.map(x => `<div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="mono">${esc(when(x.taken))}</span><span class="sub">${x.len ? bytes(x.len) : ''} · game v${esc(x.ver || '?')} · ${esc(x.why || '')}</span><button class="btn" data-act="restore" data-id="${esc(id)}" data-h="${x.id}">Restore</button></div>`).join('')
+        : 'No earlier copies yet. They are kept from now on (one every 10 minutes while the pilot plays, and always before a save shrinks a lot).';
+    } else if (a === 'restore') {
+      if (!confirm(`Restore this earlier cloud save for ${u.display}?
+
+It becomes their save on every device (they need to reload). Their current save is kept as a copy first, so this can be undone.`)) return;
+      await api('saves/restore', { uid: id, id: +h });
+      NOTICE[id] = 'Restored. Ask ' + esc(u.display) + ' to reload the game; it loads the restored save.';
     } else if (a === 'delete') {
       const c = prompt(`Delete ${u.display} for good?\n\nThis removes the account, cloud saves, leaderboard entry and friends. It cannot be undone.\n\nType the login callsign (${u.callsign}) to confirm:`);
       if (c == null) return;

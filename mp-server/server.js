@@ -16,7 +16,7 @@ const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { WebSocketServer } = require('ws');
 
-const VERSION = '1.4.0';
+const VERSION = '1.5.0';
 const STARTED = Date.now();
 const PORT = +process.env.PORT || 8080;
 const DB_PATH = process.env.DB_PATH || '/data/askiies.db';
@@ -97,6 +97,19 @@ db.exec(`
     closed INTEGER
   );
   CREATE INDEX IF NOT EXISTS bugs_status ON bugs(status, ts);
+  -- v1.5: earlier copies of each pilot's cloud save (bug #24), restorable by the pilot or the admin
+  CREATE TABLE IF NOT EXISTS save_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    uid TEXT NOT NULL,
+    taken INTEGER NOT NULL,
+    ts INTEGER,
+    len INTEGER,
+    ver TEXT,
+    why TEXT,
+    meta TEXT NOT NULL,
+    parts TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS save_history_uid ON save_history(uid, taken);
   -- v1.2: players online, sampled once a minute
   CREATE TABLE IF NOT EXISTS samples (
     ts INTEGER PRIMARY KEY,
@@ -320,6 +333,59 @@ const canWrite = (uid, p) => (own(uid, p) && p.split('/').length >= 4) || p === 
 
 class HttpErr extends Error { constructor(code, msg) { super(msg || code); this.code = code; } }
 
+// ---------------------------------------------------------------- cloud save history (bug #24)
+// The game uploads save0..saveN, then savemeta. Before the first part of an upload overwrites the
+// current cloud save, that save is copied into save_history: at most one copy per 10 minutes, but
+// always when the new save is much smaller than the old one (the "progress wiped" case). 30 kept.
+const SH_KEEP = 30, SH_GAP = 10 * 60e3;
+const H = {
+  last: db.prepare('SELECT taken FROM save_history WHERE uid = ? ORDER BY taken DESC LIMIT 1'),
+  ins: db.prepare('INSERT INTO save_history (uid, taken, ts, len, ver, why, meta, parts) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+  trim: db.prepare('DELETE FROM save_history WHERE uid = ?1 AND id NOT IN (SELECT id FROM save_history WHERE uid = ?1 ORDER BY taken DESC LIMIT ' + SH_KEEP + ')'),
+  list: db.prepare('SELECT id, taken, ts, len, ver, why FROM save_history WHERE uid = ? ORDER BY taken DESC'),
+  get: db.prepare('SELECT * FROM save_history WHERE id = ? AND uid = ?'),
+  count: db.prepare('SELECT uid, count(*) AS n FROM save_history GROUP BY uid'),
+};
+const SAVE_RE = /^data\/users\/([^/]+)\/save(\d+|meta)$/;
+const keepRate = new Map();   // uid -> recent /api/saves/keep times
+function saveSnapshot(uid, why) {
+  const base = 'data/users/' + uid + '/';
+  const m = Q.docGet.get(base + 'savemeta');
+  if (!m) return false;
+  let meta; try { meta = JSON.parse(m.data); } catch (e) { return false; }
+  const parts = [];
+  for (let i = 0; i < (meta.n | 0); i++) { const d = Q.docGet.get(base + 'save' + i); if (!d) return false; parts.push(d.data); }
+  H.ins.run(uid, Date.now(), meta.ts || null, meta.len || null, String(meta.v || ''), why, m.data, JSON.stringify(parts));
+  H.trim.run(uid);
+  return true;
+}
+function beforeSaveWrite(uid, p, s) {
+  const k = SAVE_RE.exec(p);
+  if (!k || k[1] !== uid || k[2] === 'meta') return;
+  const old = Q.docGet.get(p);
+  if (!old) return;
+  if (old.data === s) return;
+  const last = H.last.get(uid), shrink = s.length < old.data.length * 0.6 && old.data.length > 2000;
+  if (k[2] === '0' && (!last || Date.now() - last.taken > SH_GAP)) saveSnapshot(uid, 'auto');
+  else if (shrink) saveSnapshot(uid, 'shrink');   // much smaller than before: always keep the old one
+}
+function saveRestore(uid, hid, by) {
+  const h = H.get.get(hid, uid);
+  if (!h) throw new HttpErr('not_found', 'no such saved copy');
+  saveSnapshot(uid, 'before restore');                                   // the current save stays restorable too
+  const base = 'data/users/' + uid + '/', parts = JSON.parse(h.parts), meta = JSON.parse(h.meta), now = Date.now();
+  db.exec('BEGIN');
+  try {
+    parts.forEach((d, i) => Q.docSet.run(base + 'save' + i, uid, d, now));
+    for (let i = parts.length; i < parts.length + 20; i++) Q.docDel.run(base + 'save' + i);
+    meta.ts = now; meta.n = parts.length; meta.restored = h.taken;           // newer than every device: they all load it
+    Q.docSet.run(base + 'savemeta', uid, JSON.stringify(meta), now);
+    db.exec('COMMIT');
+  } catch (e) { db.exec('ROLLBACK'); throw e; }
+  logEv('save_restore', uid, 'cloud save from ' + new Date(h.taken).toISOString().slice(0, 16).replace('T', ' ') + ' UTC restored by ' + by);
+  return { ok: true, ts: now };
+}
+
 function dbOp(user, body) {
   const op = body && body.op;
   const p = cleanPath(body && body.path);
@@ -342,6 +408,7 @@ function dbOp(user, body) {
     if (s.length > (p.startsWith('lb/') ? MAX_LB_DOC : MAX_DOC)) throw new HttpErr('resource_exhausted', 'document too large');
     const prev = Q.docOwner.get(p);
     if (Q.quota.get(user.id).n - (prev ? prev.n : 0) + s.length > USER_QUOTA) throw new HttpErr('resource_exhausted', 'storage quota full');
+    try { beforeSaveWrite(user.id, p, s); } catch (e) { console.error('[mp] save history', e); }
     Q.docSet.run(p, user.id, s, Date.now());
     return { ok: true };
   }
@@ -410,6 +477,23 @@ const server = http.createServer(async (req, res) => {
     if (!user) throw new HttpErr('unauthenticated', 'signed out');
 
     if (route === 'GET /api/bugs/mine') return send(res, 200, { bugs: B.mine.all(user.id) });
+    if (route === 'GET /api/saves') return send(res, 200, { saves: H.list.all(user.id) });
+    if (route === 'POST /api/saves/restore') return send(res, 200, saveRestore(user.id, +(await readBody(req)).id || 0, 'the pilot'));
+    // keep a copy before the game replaces one save with the other (the "which save?" choice)
+    if (route === 'POST /api/saves/keep') {
+      const b = await readBody(req), now = Date.now();
+      const recent = (keepRate.get(user.id) || []).filter(t => t > now - 60e3);
+      if (recent.length >= 6) throw new HttpErr('rate_limited', 'too many copies, wait a minute');
+      recent.push(now); keepRate.set(user.id, recent);
+      if (b.from === 'device') {                                                        // this device's save, sent by the game
+        const parts = Array.isArray(b.parts) ? b.parts.filter(x => typeof x === 'string') : [];
+        const meta = b.meta && typeof b.meta === 'object' ? b.meta : null;
+        if (!parts.length || !meta || JSON.stringify(parts).length > MAX_DOC * 2) throw new HttpErr('invalid_argument', 'bad save');
+        H.ins.run(user.id, now, +meta.ts || null, +meta.len || null, String(meta.v || ''), 'this device', JSON.stringify(meta), JSON.stringify(parts.map(d => JSON.stringify({ d }))));
+        H.trim.run(user.id);
+      } else saveSnapshot(user.id, 'before a choice');                                  // the account's save
+      return send(res, 200, { ok: true });
+    }
 
     if (route === 'GET /api/me') return send(res, 200, { id: user.id, callsign: user.cs, display: user.disp });
     if (route === 'POST /api/profile') {
@@ -629,7 +713,7 @@ const tempPassword = () => { const w = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s
 
 function adminOverview() {
   const now = Date.now();
-  const lb = new Map(), meta = new Map();
+  const lb = new Map(), meta = new Map(), saves = new Map(H.count.all().map(r => [r.uid, r.n]));
   for (const r of A.lb.all()) { try { lb.set(r.path.slice(3), JSON.parse(r.data)); } catch (e) {} }
   for (const r of A.meta.all()) { try { meta.set(r.uid, JSON.parse(r.data)); } catch (e) {} }
   const where = new Map();   // uid -> { rooms:Set, since }
@@ -648,7 +732,7 @@ function adminOverview() {
       last: o ? now : u.last, play: u.play + (o ? now - o.since : 0), logins: u.logins, visits: u.visits,
       bytes: u.bytes, friends: u.friends, sessions: u.sessions,
       online: !!w, tabs: w ? w.tabs : 0, rooms: w ? [...w.rooms] : [], onlineSince: w ? w.since : null,
-      save: m ? m.ts || null : null, version: String((m && m.v) || (l && l.v) || ''), records: rec,
+      save: m ? m.ts || null : null, saveCopies: saves.get(u.id) || 0, version: String((m && m.v) || (l && l.v) || ''), records: rec,
     };
   });
   const roomList = [...rooms_list()];
@@ -733,6 +817,8 @@ async function adminRoute(req, res, url, route) {
     if (status !== cur.status) logEv('bug_status', null, '#' + cur.id + ' ' + cur.status + ' → ' + status + ' (admin page)');
     return send(res, 200, { ok: true });
   }
+  if (route === 'GET /admin/api/saves') return send(res, 200, { saves: H.list.all(String(url.searchParams.get('uid') || '')) });
+  if (route === 'POST /admin/api/saves/restore') { const b = await readBody(req); return send(res, 200, saveRestore(String(b.uid || ''), +b.id || 0, 'the admin')); }
   if (route === 'POST /admin/api/user') {
     const b = await readBody(req);
     const u = A.full.get(String(b.id || ''));
@@ -761,7 +847,7 @@ async function adminRoute(req, res, url, route) {
       if (normCs(b.confirm) !== u.callsign) throw new HttpErr('invalid_argument', 'type the login callsign to confirm');
       kickUser(u.id, 'account deleted');
       db.exec('BEGIN');
-      try { A.delDocs.run(u.id); A.delFriends.run(u.id); A.delSessions.run(u.id); A.delUser.run(u.id); db.exec('COMMIT'); }
+      try { A.delDocs.run(u.id); db.prepare('DELETE FROM save_history WHERE uid = ?').run(u.id); A.delFriends.run(u.id); A.delSessions.run(u.id); A.delUser.run(u.id); db.exec('COMMIT'); }
       catch (e) { db.exec('ROLLBACK'); throw e; }
       logEv('admin_delete', null, 'deleted ' + u.callsign + ' (' + u.display + ')');
       return send(res, 200, { ok: true });

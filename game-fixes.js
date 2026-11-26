@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.6.0)
+/* ASKIIES game fixes (game-fixes.js v1.7.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -28,6 +28,8 @@
  * 6. ONLINE BATTLES · other pilots' Workshop jets look like their real design (bug #9)
  *
  * 7. PHONES · save and craft files load and download from the game's buttons (bug #19)
+ *
+ * 8. CLOUD SAVE · never silently overwrites better progress; one tab saves at a time (bug #24)
  */
 (function () {
   'use strict';
@@ -380,5 +382,136 @@
     };
   }
 
-  g.ASKIIES_FIXES = { version: '1.6.0', fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  // ---- 8. the cloud save never silently overwrites better progress (bug #24)
+  // The game uploads the local save every 20 s and when you leave, and at sign-in it only downloads the
+  // cloud save if the cloud is newer than this browser's "last synced" time. Whatever this browser has
+  // otherwise wins, so a stale tab or device, a reset local save, or a different pilot's save on the
+  // same browser could replace someone's progress. Now, before an automatic upload:
+  //  - the cloud changed since this browser last synced (another device / tab), or this save is much
+  //    smaller than the cloud one: nothing is uploaded and the player chooses which save to keep (the
+  //    other one is kept on the server first: ACCOUNT ▸ OLDER SAVES);
+  //  - the local save belongs to another pilot: this pilot's own cloud save is loaded instead.
+  // Plus: when the game is opened in a second tab, the older tab stops saving.
+  const OWN = 'askiies-cloud-uid', LSK_ = 'ascii-strike';
+  const lsGet = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (e) {} };
+  const uidNow = () => G_(() => ASKIIES_MP.me().id) || null;                                          // eslint-disable-line no-undef
+  const syncedTs = () => { try { return +JSON.parse(lsGet('askiies-cloud') || '{}').ts || 0; } catch (e) { return 0; } };
+  const mpCall = async (p, body) => {
+    const t = lsGet('askiies-mp-token');
+    const r = await fetch(new URL('mp/api/' + p, document.baseURI).href, { method: body ? 'POST' : 'GET', headers: Object.assign({ 'Content-Type': 'application/json' }, t ? { Authorization: 'Bearer ' + t } : {}), body: body ? JSON.stringify(body) : undefined, cache: 'no-store' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    return r.json();
+  };
+  const TAB = { id: Math.random().toString(36).slice(2), born: Date.now(), paused: false };
+  let cHold = 0, cBox = null;
+  async function keepDeviceCopy() {                                                                    // this device's save, to the server's OLDER SAVES
+    const s = lsGet(LSK_); if (!s) return;
+    const z = typeof zip === 'function' ? await zip(s) : { z: 0, d: s };                                // eslint-disable-line no-undef
+    const parts = []; for (let i = 0; i < z.d.length; i += 180000) parts.push(z.d.slice(i, i + 180000));
+    await mpCall('saves/keep', { from: 'device', meta: { ts: syncedTs() || Date.now(), n: parts.length, z: z.z, len: s.length, v: G_(() => ULOG[0].v) }, parts });   // eslint-disable-line no-undef
+  }
+  function cloudChoice(M, s, newer) {
+    if (cBox) return;
+    const show = () => {
+      if (G_(() => st) === 1 && !G_(() => P.dead)) { setTimeout(show, 1500); return; }                // not in the middle of a flight
+      const ago = t => { const m = Math.round((Date.now() - t) / 60000); return m < 1 ? 'just now' : m < 60 ? m + ' min ago' : m < 1440 ? Math.round(m / 60) + ' h ago' : Math.round(m / 1440) + ' days ago'; };
+      const kb = n => Math.max(1, Math.round((n || 0) / 1024)) + ' KB';
+      cBox = document.createElement('div'); cBox.id = 'amp-bug';
+      cBox.innerHTML = `<div class="bx"><h2>WHICH SAVE DO YOU WANT TO KEEP?</h2>
+        <p style="color:#f2fff8;font-size:12px">${newer
+          ? `Your account was saved from another device or tab ${ago(M.ts)} (${kb(M.len)}). This device has different progress (${kb(s.length)}).`
+          : `This device's save (${kb(s.length)}) is much smaller than the one in your account (${kb(M.len)}, saved ${ago(M.ts)}). Uploading it could wipe your progress.`}</p>
+        <p>Nothing has been overwritten. Whichever you choose, the other one is kept: ACCOUNT &amp; SAVES ▸ OLDER SAVES.</p>
+        <div class="err"></div>
+        <div class="row"><button type="button" class="alt" data-k="dev">KEEP THIS DEVICE'S</button><button type="button" data-k="acc">LOAD MY ACCOUNT'S SAVE</button></div></div>`;
+      for (const t of ['keydown', 'keyup', 'mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel']) cBox.addEventListener(t, e => e.stopPropagation());
+      cBox.addEventListener('click', async e => {
+        const k = e.target && e.target.getAttribute('data-k'); if (!k) return;
+        cBox.querySelectorAll('button').forEach(b => { b.disabled = true; });
+        try {
+          if (k === 'acc') {
+            try { await keepDeviceCopy(); } catch (x) {}
+            const got = await _pull.call(null, 1);
+            if (got) { g.cloudApply(); return; }
+            cHold = 0;
+          } else {
+            try { await mpCall('saves/keep', { from: 'account' }); } catch (x) {}
+            cHold = 0; await g.cloudPush(1);
+          }
+          cBox.remove(); cBox = null;
+        } catch (x) { const er = cBox.querySelector('.err'); if (er) er.textContent = 'SOMETHING WENT WRONG · TRY AGAIN'; cBox.querySelectorAll('button').forEach(b => { b.disabled = false; }); }
+      });
+      document.body.appendChild(cBox);
+    };
+    show();
+  }
+  const _push = g.cloudPush, _pull = g.cloudPull;
+  if (typeof _push === 'function' && typeof _pull === 'function') {
+    g.cloudPush = async function (force) {
+      const C = G_(() => CLD);                                                                          // eslint-disable-line no-undef
+      if (TAB.paused) return;                                                                           // an older tab never uploads
+      if (!C || !C.col) return _push.apply(this, arguments);
+      if (!force) {
+        if (cHold) return;
+        const s = lsGet(LSK_);
+        if (!s || s === C.last || C.busy) return _push.apply(this, arguments);                         // nothing new: the game does nothing
+        let M = null;
+        try { const m = await C.col.doc('savemeta').get(); M = m.exists ? m.data() : null; } catch (e) { return; }   // offline: try again later
+        if (M) {
+          const owner = lsGet(OWN), uid = uidNow();
+          if (owner && uid && owner !== uid) {                                                          // another pilot's save on this browser
+            cHold = 1;
+            if (await _pull.call(null, 1)) { lsSet(OWN, uid); g.cloudApply(); }
+            return;
+          }
+          const newer = M.ts > syncedTs() + 500, shrink = (M.len | 0) > 6000 && s.length < M.len * 0.6;
+          if (newer || shrink) { cHold = 1; cloudChoice(M, s, newer); return; }
+        }
+      }
+      const r = await _push.apply(this, arguments);
+      if (!C.err && uidNow()) lsSet(OWN, uidNow());
+      return r;
+    };
+    g.cloudPull = async function (force) {
+      const owner = lsGet(OWN), uid = uidNow();
+      if (!force && owner && uid && owner !== uid) force = 1;                                           // load this pilot's own save
+      const r = await _pull.call(this, force);
+      if (uid && (r || !owner)) lsSet(OWN, uid);
+      return r;
+    };
+  }
+  // Loading a cloud save (sign-in, RESTORE FROM CLOUD, OLDER SAVES) writes it to this browser and reloads.
+  // But while the page unloads the game saves again, writing the OLD in-memory progress over the save it
+  // just loaded; after the reload this browser then counted as up to date and uploaded that old save to
+  // the cloud. On a fresh browser that was a default save: signing in wiped the account (bug #24). Same
+  // block hangar-menu.js uses for save-file imports: no more writes of the save until the reload.
+  if (typeof g.cloudApply === 'function') {
+    const _apply = g.cloudApply;
+    g.cloudApply = function () {
+      g.__svLock = 1;
+      try { sessionStorage.setItem('askiies-healed', String(Date.now())); } catch (e) {}
+      try { const s = lsGet(LSK_); if (s && typeof g.svIdbPut === 'function') { g.svIdbPut('healedAt', Date.now()); g.svIdbPut('save', s); g.svIdbPut('save.ts', Date.now()); } } catch (e) {}
+      return _apply.apply(this, arguments);
+    };
+  }
+  // the game in two tabs: both save to the same place and overwrite each other, so the older one stops
+  try {
+    const bc = new BroadcastChannel('askiies-tabs');
+    const pauseTab = () => {
+      if (TAB.paused) return;
+      TAB.paused = true; g.__svLock = 1;                                                                // hangar-menu.js: no more writes of the save
+      try { if (typeof g.svIdbPut === 'function') g.svIdbPut = () => Promise.resolve(); } catch (e) {}
+      const d = document.createElement('div'); d.id = 'amp-bug';
+      d.innerHTML = '<div class="bx"><h2>ASKIIES IS OPEN IN ANOTHER TAB</h2><p style="color:#f2fff8;font-size:12px">This tab has stopped saving so the two tabs can\'t overwrite each other\'s progress. Carry on in the other tab, or use this one instead.</p><div class="row"><button type="button">USE THIS TAB INSTEAD</button></div></div>';
+      for (const t of ['keydown', 'keyup', 'mousedown', 'mouseup', 'click', 'pointerdown', 'pointerup', 'touchstart', 'touchend', 'wheel']) d.addEventListener(t, e => e.stopPropagation());
+      d.querySelector('button').addEventListener('click', () => location.reload());
+      try { G_(() => pause()); } catch (e) {}                                                             // eslint-disable-line no-undef
+      (document.body || document.documentElement).appendChild(d);
+    };
+    bc.onmessage = e => { const m = e.data || {}; if (m.t === 'hello' && m.id !== TAB.id && m.born > TAB.born) pauseTab(); };
+    bc.postMessage({ t: 'hello', id: TAB.id, born: TAB.born });
+  } catch (e) {}
+
+  g.ASKIIES_FIXES = { version: '1.7.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();

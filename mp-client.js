@@ -1,4 +1,4 @@
-/* ASKIIES self-hosted online services (mp-client.js v1.8.0)
+/* ASKIIES self-hosted online services (mp-client.js v1.9.0)
  *
  * The game was written for claude.ai artifacts and already contains its own online code:
  * matchmaking lobby, battles, co-op workshop (window.claude.use('room')), cloud saves and the
@@ -263,7 +263,7 @@
       return Promise.resolve(null);   // downloads / sample etc.: the game falls back on its own
     }
   };
-  window.ASKIIES_MP = { version: '1.8.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut, bug: () => showBug(), snapshot: () => quickBug(), pending: () => pendGet().map(p => ({ id: p.id, ts: p.ts, where: p.where, local: !!p.local })), errors: () => ERRS.slice() };
+  window.ASKIIES_MP = { version: '1.9.0', state: () => uiState, me: () => me, signIn: () => showLogin(), signOut, bug: () => showBug(), snapshot: () => quickBug(), pending: () => pendGet().map(p => ({ id: p.id, ts: p.ts, where: p.where, local: !!p.local })), errors: () => ERRS.slice() };
 
   // ================================================================== UI
   // Sign-in box, invite prompt (both styled like the game's own text box), display callsign sync,
@@ -432,7 +432,7 @@
       page: location.pathname + location.search,
       game: GG(() => ULOG[0].v),                                                                          // eslint-disable-line no-undef
       modules: { mp: window.ASKIIES_MP && ASKIIES_MP.version, planes: GG(() => ASKIIES_PLANES.version), terrain: GG(() => ASKIIES_TERRAIN.version),   // eslint-disable-line no-undef
-        alerts: GG(() => ASKIIES_ALERTS.version), menu: GG(() => ASKIIES_MENU.version) },                // eslint-disable-line no-undef
+        alerts: GG(() => ASKIIES_ALERTS.version), menu: GG(() => ASKIIES_MENU.version), fixes: GG(() => ASKIIES_FIXES.version) },                // eslint-disable-line no-undef
       state: {
         st: GG(() => st), mode: GG(() => MODE), menuPage: GG(() => hpg), flying: flyingNow(),           // eslint-disable-line no-undef
         vehicle: GG(() => VEHM), aircraft: GG(() => A && (A.n || A.name)), dead: GG(() => !!P.dead),     // eslint-disable-line no-undef
@@ -647,6 +647,46 @@
       document.body.appendChild(callout);
     } else if (mode !== 'menu' && callout) dropCallout(false);
   }, 250);
+
+  // ------------------------------------------------------------------ older cloud saves (bug #24)
+  let sov = null;
+  function closeSaves() { if (sov) { sov.remove(); sov = null; } uiChanged(); }
+  async function showSaves() {
+    if (sov || !document.body) return;
+    addCss();
+    const when = t => new Date(t).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    sov = el(`<div id="amp-bug"><div class="bx"><h2>OLDER SAVES</h2>
+      <p>Earlier copies of your cloud save, newest first. Restoring one replaces your progress on every device; your current save is kept here first, so you can always come back.</p>
+      <div class="mine"><p>Loading…</p></div>
+      <div class="err"></div>
+      <div class="row"><button type="button" class="alt" data-k="x">CLOSE</button></div></div></div>`);
+    shield(sov);
+    sov.addEventListener('click', async e => {
+      const k = e.target && e.target.getAttribute('data-k');
+      if (k === 'x' || e.target === sov) { closeSaves(); return; }
+      const id = e.target && e.target.getAttribute('data-h');
+      if (!id) return;
+      if (!confirm('Go back to this save? Your progress on every device becomes this copy.')) return;
+      try {
+        e.target.disabled = true;
+        await call('saves/restore', { id: +id });
+        closeSaves();
+        toast('RESTORING YOUR SAVE…');
+        const got = await cloudPull(1);
+        if (got) cloudApply(); else toast('THIS DEVICE ALREADY HAS THAT SAVE', HY);
+      } catch (x) { const er = sov && sov.querySelector('.err'); if (er) er.textContent = (x.message || 'RESTORE FAILED').toUpperCase(); e.target.disabled = false; }
+    });
+    document.body.appendChild(sov);
+    uiChanged();
+    try {
+      const j = await call('saves');
+      const box = sov && sov.querySelector('.mine');
+      if (!box) return;
+      box.innerHTML = j.saves.length
+        ? j.saves.map(x => `<div class="mb" style="display:flex;align-items:center;gap:10px"><span style="flex:1">${escH(when(x.taken))} · ${Math.round((x.len || 0) / 1024)} KB${x.why === 'shrink' ? ' · <span class="st">BEFORE A BIG CHANGE</span>' : x.why === 'before restore' ? ' · <span class="st">BEFORE A RESTORE</span>' : ''}</span><button type="button" data-h="${x.id}" style="padding:4px 12px;font-size:12px">RESTORE</button></div>`).join('')
+        : '<p>No earlier copies yet. From now on one is kept every 10 minutes while you play.</p>';
+    } catch (x) { const box = sov && sov.querySelector('.mine'); if (box) box.innerHTML = '<p>Could not load the list. Try again shortly.</p>'; }
+  }
 
   async function signOut() {
     try { await call('logout', {}); } catch (e) {}
@@ -1043,7 +1083,8 @@
     if (me) {
       R.push({ l: 'CALLSIGN: ' + me.display + '  ✎', a: editDisplay, d: 'Your display callsign, shown to other pilots. Your login stays ' + me.callsign + '.' },
         { l: 'SYNC NOW', a: () => { try { save(); } catch (e) {} if (typeof cloudPush !== 'function' || !G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } cloudPush(1).then(() => toast(CLD.err ? 'SYNC FAILED · ' + CLD.err : 'SAVED TO YOUR ACCOUNT', CLD.err ? HR : HG)); }, d: 'Upload your progress, builds and settings now. It also happens every 20 seconds and when you leave.' },
-        { l: 'RESTORE FROM CLOUD', a: async () => { if (!G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } try { const got = await cloudPull(1); if (got) cloudApply(); else toast('NO CLOUD SAVE YET', HY); } catch (e) { toast('RESTORE FAILED', HR); } }, d: 'Replace this device\'s progress with the copy saved to your account.' });
+        { l: 'RESTORE FROM CLOUD', a: async () => { if (!G(() => CLD.col)) { toast('CLOUD SAVE IS STILL CONNECTING', HY); return; } try { const got = await cloudPull(1); if (got) cloudApply(); else toast('NO CLOUD SAVE YET', HY); } catch (e) { toast('RESTORE FAILED', HR); } }, d: 'Replace this device\'s progress with the copy saved to your account.' },
+        { l: 'OLDER SAVES', a: showSaves, d: 'Lost progress? The server keeps earlier copies of your cloud save (one every 10 minutes while you play). Pick one to go back to.' });
     } else {
       R.push({ l: 'SIGN IN', a: () => showLogin(), d: 'Sign in to keep your progress in the cloud and play online.' },
         { l: 'CREATE A PILOT', a: () => showLogin(null, 'register'), d: 'New here? Make a pilot: just a callsign and a password.' });
