@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.1.0)
+/* ASKIIES game fixes (game-fixes.js v1.2.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -18,6 +18,8 @@
  *    Each player's game ran its own ticket count, so a battle could end for one player and go on
  *    for another. The lowest peer id keeps the score for everyone, and the first result ends the
  *    battle on every screen.
+ *
+ * 3. ONLINE BATTLES · no squadron intro cutscenes (bug #14)
  */
 (function () {
   'use strict';
@@ -116,5 +118,16 @@
     };
   }
 
-  g.ASKIIES_FIXES = { version: '1.1.0', fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle'], caCtx: () => caCtx, endW: () => endW };
+  // ---- 3. no squadron intro cutscenes in online battles (bug #14)
+  // The squadron intro (and the enemy / fly-by cutscenes it starts) played at the start of 1v1 duels,
+  // where there is no squadron, and in team battles the other players are already flying meanwhile.
+  if (typeof g.sqIntro === 'function') {
+    const _sq = g.sqIntro;
+    g.sqIntro = function () {
+      if (inBattle()) return;
+      return _sq.apply(this, arguments);
+    };
+  }
+
+  g.ASKIIES_FIXES = { version: '1.2.0', fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles'], caCtx: () => caCtx, endW: () => endW };
 })();
