@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.4.0)
+/* ASKIIES game fixes (game-fixes.js v1.5.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -24,6 +24,8 @@
  * 4. WORKSHOP · a design keeps its own paint, camo and decals (bug #13 / #17)
  *
  * 5. ONLINE BATTLES · everyone sees nukes and plasma blasts (bug #12)
+ *
+ * 6. ONLINE BATTLES · other pilots' Workshop jets look like their real design (bug #9)
  */
 (function () {
   'use strict';
@@ -275,5 +277,79 @@
     if (fxSeen.size > 400) fxSeen.clear();
   }, 100);
 
-  g.ASKIIES_FIXES = { version: '1.4.0', fxPlay, fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  // ---- 6. other pilots' Workshop jets look like their real design in battles (bug #9)
+  // The game shows other pilots in their real stock jet, but a Workshop jet (ac 11) was never sent, so
+  // everyone else saw a stand-in. The design (with its paint and decal pictures, see fix 4) now rides in
+  // battle presence in small pieces, about 2 a second; the other games put it together and build the
+  // real model once. (Custom-built missiles are not sent, so pylons show empty.)
+  const JD_CHUNK = 6000;
+  let jdText = null, jdHash = null, jdAt = 0, jdTick = 0, jdI = 0;
+  const hashStr = t => { let h = 5381; for (let i = 0; i < t.length; i++) h = ((h << 5) + h + t.charCodeAt(i)) | 0; return (h >>> 0).toString(36) + t.length.toString(36); };
+  function jdRefresh() {
+    if (Date.now() - jdAt < 2000 && jdText) return;
+    jdAt = Date.now();
+    const d = G_(() => CD());                                                                           // eslint-disable-line no-undef
+    if (!d || !Array.isArray(d.parts)) { jdText = null; return; }
+    try { syncLook(); } catch (e) {}
+    const t = JSON.stringify({ d: JSON.parse(JSON.stringify(d, (k, v) => k[0] === '_' ? undefined : v)), p: G_(() => OPT.paint[11]) || null });   // eslint-disable-line no-undef
+    if (t !== jdText) { jdText = t; jdHash = hashStr(t); jdI = 0; }
+  }
+  const prevPres3 = g.__ampPres;
+  g.__ampPres = o => {
+    o = prevPres3(o) || o;
+    try {
+      if (o && o.u && inBattle() && (o.ac | 0) === 11) {
+        jdRefresh();
+        if (jdText && (++jdTick % 5) === 0) {                                                           // every 5th update ≈ 2 pieces a second
+          const n = Math.ceil(jdText.length / JD_CHUNK), i = jdI++ % n;
+          o.jd = [jdHash, i, n, jdText.slice(i * JD_CHUNK, (i + 1) * JD_CHUNK)];
+        }
+      }
+    } catch (e) {}
+    return o;
+  };
+  const JB = {};                                                                                        // peer -> { h, n, ch[], mesh, E }
+  function buildRemoteJet(o) {
+    const d = o.d, paint = o.p || G_(() => ALPAINT);                                                    // eslint-disable-line no-undef
+    const ins0 = OPT.ins, dcl0 = OPT.dcl, ov0 = G_(() => CUOVR);                                        // eslint-disable-line no-undef
+    try {
+      // their decal pictures, in the slots their parts point at, just for this build
+      const img = (d.look && d.look.img) || {};
+      const ti = ins0.slice(), td = dcl0.slice();
+      for (const s in img) {
+        const x = img[s]; if (!x || !x.v) continue;
+        if (s === 's') ti[OPT.sqi | 0] = x.v; else if (s[0] === 'i') ti[+s.slice(1)] = x.v; else if (s[0] === 'd') td[+s.slice(1)] = x.v;   // eslint-disable-line no-undef
+      }
+      OPT.ins = ti; OPT.dcl = td;                                                                        // eslint-disable-line no-undef
+      CUOVR = d;                                                                                          // eslint-disable-line no-undef
+      return buildJet(11, paint, 0);                                                                     // eslint-disable-line no-undef
+    } finally { CUOVR = ov0 === undefined ? null : ov0; OPT.ins = ins0; OPT.dcl = dcl0; }              // eslint-disable-line no-undef
+  }
+  function wearJet(E, mesh) {
+    try {
+      const m = mesh.clone(); m.scale.setScalar(1.8);
+      S.remove(E.m); S.add(m); E.m = m; E.pr = parts(m);                                                 // eslint-disable-line no-undef
+      m.position.copy(E.p); m.quaternion.copy(E.q); m.visible = !E.dead;
+      m.userData.wsj = 1;
+    } catch (e) {}
+  }
+  setInterval(() => {
+    if (!inBattle()) { for (const k in JB) delete JB[k]; return; }
+    for (const pe of peersNow()) {
+      const pr = pe.presence, jd = pr.jd, E = G_(() => CA.rem[pe.peer]);                                 // eslint-disable-line no-undef
+      if ((pr.ac | 0) !== 11) continue;
+      let B = JB[pe.peer];
+      if (Array.isArray(jd) && typeof jd[3] === 'string' && jd[2] > 0 && jd[2] < 60) {
+        if (!B || B.h !== jd[0]) B = JB[pe.peer] = { h: jd[0], n: jd[2], ch: new Array(jd[2]), mesh: B && B.mesh, E: null };
+        B.ch[jd[1]] = jd[3];
+        if (!B.done && B.ch.filter(x => typeof x === 'string').length === B.n) {
+          B.done = 1;
+          try { const o = JSON.parse(B.ch.join('')); if (o && o.d && Array.isArray(o.d.parts)) { B.mesh = buildRemoteJet(o); B.E = null; } } catch (e) { console.warn('[game-fixes] could not build a workshop jet', e); }
+        }
+      }
+      if (B && B.mesh && E && E.net && E.ty === 'air' && B.E !== E) { wearJet(E, B.mesh); B.E = E; }   // new design, or they respawned / rejoined
+    }
+  }, 250);
+
+  g.ASKIIES_FIXES = { version: '1.5.0', fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
