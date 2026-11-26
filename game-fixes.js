@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.5.0)
+/* ASKIIES game fixes (game-fixes.js v1.6.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -26,6 +26,8 @@
  * 5. ONLINE BATTLES · everyone sees nukes and plasma blasts (bug #12)
  *
  * 6. ONLINE BATTLES · other pilots' Workshop jets look like their real design (bug #9)
+ *
+ * 7. PHONES · save and craft files load and download from the game's buttons (bug #19)
  */
 (function () {
   'use strict';
@@ -351,5 +353,32 @@
     }
   }, 250);
 
-  g.ASKIIES_FIXES = { version: '1.5.0', fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  // ---- 7. phones: save / craft files open and download from the game's buttons (bug #19)
+  // The game runs its on-screen buttons on pointerdown. With a mouse that counts as a click, but a finger
+  // touching the screen does not ("user activation" only comes when the finger lifts), so on phones the
+  // browser silently refused the file picker (LOAD SAVE / LOAD CRAFT FILE / music) and the downloads.
+  // Now a file picker or download asked for without that permission waits for the finger to lift
+  // (pointerup / touchend / click), which grants it, and happens then. Desktop is unchanged.
+  if (typeof HTMLInputElement !== 'undefined' && navigator.userActivation) {
+    const needTap = () => !navigator.userActivation.isActive;
+    let waiting = [];
+    const run = () => { const q = waiting; waiting = []; for (const f of q) try { f(); } catch (e) {} };
+    for (const ev of ['pointerup', 'touchend', 'click']) addEventListener(ev, () => { if (waiting.length) run(); }, true);
+    const _ic = HTMLInputElement.prototype.click;
+    HTMLInputElement.prototype.click = function () {
+      if (this.type === 'file' && needTap()) { const el = this; waiting.push(() => _ic.call(el)); return; }
+      return _ic.apply(this, arguments);
+    };
+    const _ac = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      if (this.hasAttribute('download') && needTap()) {
+        const el = this;
+        waiting.push(() => { const tmp = !el.isConnected; if (tmp) document.body.appendChild(el); _ac.call(el); if (tmp) el.remove(); });
+        return;
+      }
+      return _ac.apply(this, arguments);
+    };
+  }
+
+  g.ASKIIES_FIXES = { version: '1.6.0', fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
