@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.7.0)
+/* ASKIIES game fixes (game-fixes.js v1.8.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -76,7 +76,11 @@
   const inBattle = () => !!G_(() => CA.on && CA.mr);                                                  // eslint-disable-line no-undef
   const peersNow = () => (G_(() => CA.np) || []).filter(p => p && !p.sameTab && p.presence && p.presence.u);   // eslint-disable-line no-undef
   const absTk = () => { const t = [0, 0], tm = CA.team | 0; t[tm] = Math.round(CA.tk[0] * 10) / 10; t[1 - tm] = Math.round(CA.tk[1] * 10) / 10; return t; };   // eslint-disable-line no-undef
-  let lastPres = null, endW = null;
+  // Bug #22: a result must belong to THIS battle. Each player sends when their battle started (bs);
+  // players in one battle start within seconds of each other, a leftover result from the previous
+  // battle (a rematch can reuse the room name) started minutes earlier and is ignored.
+  let lastPres = null, endW = null, battleStart = 0;
+  const BS_WINDOW = 45e3;
   const prevPres = g.__ampPres;
   g.__ampPres = o => {
     if (typeof prevPres === 'function') try { o = prevPres(o) || o; } catch (e) {}
@@ -84,6 +88,7 @@
       if (!o || !o.u || !inBattle()) return o;
       o.tk = absTk();
       o.el = Math.round((mT - CA.t0) * 10) / 10;                                                       // eslint-disable-line no-undef
+      if (battleStart) o.bs = battleStart;
       if (endW != null) o.end = endW;
       lastPres = o;
     } catch (e) {}
@@ -100,6 +105,10 @@
       return _end.apply(this, arguments);
     };
   }
+  if (typeof g.caSetup === 'function') {                                                             // a new battle: no result yet
+    const _setup = g.caSetup;
+    g.caSetup = function () { endW = null; lastPres = null; battleStart = Date.now(); return _setup.apply(this, arguments); };
+  }
   if (typeof g.caTick === 'function') {
     const _tick = g.caTick;
     g.caTick = function (dt) {
@@ -108,14 +117,14 @@
           endW = null;                                                                                  // a battle still running has no result yet
           const me = String(myPeer() || ''), ps = peersNow();
           // a result from anyone ends it here too
-          const fin = ps.find(p => p.presence.end === 0 || p.presence.end === 1);
+          const fin = ps.find(p => (p.presence.end === 0 || p.presence.end === 1) && battleStart && Math.abs((+p.presence.bs || 0) - battleStart) < BS_WINDOW);
           if (fin) {
             const w = fin.presence.end, t = fin.presence.tk, tm = CA.team | 0;                          // eslint-disable-line no-undef
             if (Array.isArray(t) && isFinite(t[0]) && isFinite(t[1])) { CA.tk[0] = +t[tm]; CA.tk[1] = +t[1 - tm]; }   // eslint-disable-line no-undef
             endW = w; return g.caEnd(w === tm);
           }
           // the score keeper: lowest peer id among the players in the battle
-          const host = ps.filter(p => Array.isArray(p.presence.tk)).sort((a, b) => String(a.peer) < String(b.peer) ? -1 : 1)[0];
+          const host = ps.filter(p => Array.isArray(p.presence.tk) && battleStart && Math.abs((+p.presence.bs || 0) - battleStart) < BS_WINDOW).sort((a, b) => String(a.peer) < String(b.peer) ? -1 : 1)[0];
           if (host && me && String(host.peer) < me) {
             const t = host.presence.tk, tm = CA.team | 0;                                               // eslint-disable-line no-undef
             if (isFinite(t[0]) && isFinite(t[1])) { CA.tk[0] = +t[tm]; CA.tk[1] = +t[1 - tm]; }        // eslint-disable-line no-undef
@@ -513,5 +522,5 @@
     bc.postMessage({ t: 'hello', id: TAB.id, born: TAB.born });
   } catch (e) {}
 
-  g.ASKIIES_FIXES = { version: '1.7.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  g.ASKIIES_FIXES = { version: '1.8.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
