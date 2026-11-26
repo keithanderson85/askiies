@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.3.0)
+/* ASKIIES game fixes (game-fixes.js v1.4.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -22,6 +22,8 @@
  * 3. ONLINE BATTLES · no squadron intro cutscenes (bug #14)
  *
  * 4. WORKSHOP · a design keeps its own paint, camo and decals (bug #13 / #17)
+ *
+ * 5. ONLINE BATTLES · everyone sees nukes and plasma blasts (bug #12)
  */
 (function () {
   'use strict';
@@ -207,5 +209,71 @@
   }
   setInterval(() => { if (G_(() => st) === 0) try { syncLook(); } catch (e) {} }, 400);              // eslint-disable-line no-undef
 
-  g.ASKIIES_FIXES = { version: '1.3.0', fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  // ---- 5. everyone in a battle sees nukes and plasma blasts (bug #12)
+  // Battles only share positions, health and hits, so a nuke or plasma warhead went off on the
+  // shooter's screen only. The shooter's game now lists its big explosions in battle presence for a few
+  // seconds and the others replay them: the look and sound only. The damage still comes from the
+  // shooter's game alone (their splash damage already reaches other pilots as hits), so nobody is hurt
+  // twice, and a replayed plasma blast does not EMP anyone's enemies or missiles.
+  const FXK = new Set(['nuke', 'plasma', 'nukelet', 'plasmalet']);
+  const FXQ = [], fxSeen = new Set();
+  let fxId = 0, echoing = 0;
+  const fxNote = (k, p, R) => {
+    if (echoing || !p || !inBattle()) return;
+    FXQ.push([++fxId, k, Math.round(p.x), Math.round(p.y), Math.round(p.z), R | 0, Date.now()]);
+    while (FXQ.length > 8) FXQ.shift();
+  };
+  if (typeof g.xplo === 'function') {
+    const _xp = g.xplo;
+    g.xplo = function (k, p, d, s, water, f) {
+      if (FXK.has(k) && !(f && f !== G_(() => pt))) fxNote(k, p, 0);                                  // eslint-disable-line no-undef
+      return _xp.apply(this, arguments);
+    };
+  }
+  if (typeof g.nukeAt === 'function') {                                                                // nuclear tank / cannon shells
+    const _na = g.nukeAt;
+    g.nukeAt = function (p, W) { fxNote('nukeshell', p, (W && W.spl) || 200); return _na.apply(this, arguments); };
+  }
+  const prevPres2 = g.__ampPres;
+  g.__ampPres = o => {
+    o = prevPres2(o) || o;
+    try { if (o && o.u && inBattle()) { const now = Date.now(), fx = FXQ.filter(e => now - e[6] < 6000).map(e => e.slice(0, 6)); if (fx.length) o.fx = fx; } } catch (e) {}
+    return o;
+  };
+  function quietly(fn) {                                                                                // no EMP on anyone, no "EMP" message
+    const E = en.splice(0), M = mi.splice(0), m0 = g.msg;                                              // eslint-disable-line no-undef
+    g.msg = () => {};
+    try { fn(); } finally { en.push(...E); mi.push(...M); g.msg = m0; }                                 // eslint-disable-line no-undef
+  }
+  function fxPlay(e) {
+    const k = e[1], R = +e[5] || 0, p = new THREE.Vector3(+e[2], +e[3], +e[4]);                          // eslint-disable-line no-undef
+    if (![p.x, p.y, p.z].every(isFinite)) return;
+    echoing++;
+    try {
+      if (k === 'nuke' || (k === 'nukeshell' && R >= 150)) {
+        NKY.skipDmg = 1;                                                                                  // eslint-disable-line no-undef
+        try { nukeFX(p, k === 'nukeshell' ? 1 : 0, k === 'nukeshell' ? R * 3.5 : 1100); } finally { NKY.skipDmg = 0; }   // eslint-disable-line no-undef
+      } else if (k === 'nukeshell') miniNuke(p, R);                                                     // eslint-disable-line no-undef
+      else if (k === 'nukelet') miniNuke(p, 26);                                                        // eslint-disable-line no-undef
+      else if (k === 'plasma') quietly(() => plasmaFX(p));                                              // eslint-disable-line no-undef
+      else if (k === 'plasmalet') quietly(() => plasmaLet(p));                                          // eslint-disable-line no-undef
+    } catch (x) {} finally { echoing--; }
+  }
+  setInterval(() => {
+    if (!inBattle()) { fxSeen.clear(); FXQ.length = 0; return; }
+    for (const pe of peersNow()) {
+      const fx = pe.presence.fx;
+      if (!Array.isArray(fx)) continue;
+      for (const e of fx) {
+        if (!Array.isArray(e) || !FXK.has(e[1]) && e[1] !== 'nukeshell') continue;
+        const key = pe.peer + ':' + e[0];
+        if (fxSeen.has(key)) continue;
+        fxSeen.add(key);
+        fxPlay(e);
+      }
+    }
+    if (fxSeen.size > 400) fxSeen.clear();
+  }, 100);
+
+  g.ASKIIES_FIXES = { version: '1.4.0', fxPlay, fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
