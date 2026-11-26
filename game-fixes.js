@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.8.0)
+/* ASKIIES game fixes (game-fixes.js v1.9.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -335,7 +335,9 @@
       }
       OPT.ins = ti; OPT.dcl = td;                                                                        // eslint-disable-line no-undef
       CUOVR = d;                                                                                          // eslint-disable-line no-undef
-      return buildJet(11, paint, 0);                                                                     // eslint-disable-line no-undef
+      // the Workshop design's DES slot is ACS[11].d; DES[11] is a stock jet, which made every Workshop
+      // jet show up as that preset plane (bug #23)
+      return buildJet(G_(() => ACS[11].d), paint, 0);                                                   // eslint-disable-line no-undef
     } finally { CUOVR = ov0 === undefined ? null : ov0; OPT.ins = ins0; OPT.dcl = dcl0; }              // eslint-disable-line no-undef
   }
   function wearJet(E, mesh) {
@@ -522,5 +524,5 @@
     bc.postMessage({ t: 'hello', id: TAB.id, born: TAB.born });
   } catch (e) {}
 
-  g.ASKIIES_FIXES = { version: '1.8.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  g.ASKIIES_FIXES = { version: '1.9.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
