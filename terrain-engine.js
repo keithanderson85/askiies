@@ -778,7 +778,7 @@
   const TERR_UNIFORMS = Object.assign({}, SHARED, {
     uGridOrigin: { value: new THREE.Vector2(0, 0) },
     uGridRadius: { value: 28000.0 },
-    uBaseStep: { value: 24.0 },
+    uBaseStep: { value: 25.0 },   // set every frame in syncFrame (25/50/100 m by altitude, finer when zoomed: bug #7)
     uHalfM: { value: 40.0 },
     uBiome: { value: 0 },
     uMaxH: { value: 1200.0 },
@@ -2179,7 +2179,9 @@
     SHARED.uSunA.value = 1 - cov * 0.9;
     SHARED.uAmb.value = SKY.ai;
     SHARED.uAscii.value = asciiStrength();
-    SHARED.uMicro.value = (OPT.terr2 === 0 || !TPR) ? 0.0 : (TPR.micro || 0.0);
+    // Bug #7: bullets and vehicles use the game's exact ground; the micro-relief adds bumps nothing
+    // collides with, so it is off in ground vehicles (the ring spacing fix is further down).
+    SHARED.uMicro.value = (OPT.terr2 === 0 || !TPR || isVeh) ? 0.0 : (TPR.micro || 0.0);
     SHARED.uSpaceK.value = (typeof planetK === 'function') ? planetK(C.position.y) : smo(20000, 70000, C.position.y);
     SHARED.uInCloud.value = inC ? 1.0 : 0.0;
     SHARED.uBolt.value = bolt ? 1.0 : 0.0;
@@ -2212,7 +2214,10 @@
     terrMesh.visible = !!showHM;
     if (showHM) {
       // Scale base ring step only in exact powers of 2 at high altitude so world lattice never shifts!
-      const baseStep = C.position.y > 7500 ? 80.0 : (C.position.y > 3400 ? 40.0 : 20.0);
+      // Bug #7: 25 / 50 / 100 m (was 20 / 40 / 80) so the rings land on the game's 100 m height grid,
+      // and halved / quartered while the view is zoomed (24 deg gunner sight / 9 deg zoom).
+      const zk = C.fov < 17 ? 2 : C.fov < 34 ? 1 : 0;
+      const baseStep = (C.position.y > 7500 ? 100.0 : (C.position.y > 3400 ? 50.0 : 25.0)) / (1 << zk);
       TERR_UNIFORMS.uBaseStep.value = baseStep;
       TERR_UNIFORMS.uGridOrigin.value.set(gx, gz);
       TERR_UNIFORMS.uGridRadius.value = dynRad;
@@ -2439,7 +2444,7 @@
 
   // Expose debug/inspection handle on window
   window.ASKIIES_TERRAIN = {
-    version: '1.0.1',
+    version: '1.0.2',
     isActive: isGpuActive,
     getTier: () => curTierIdx,
     setMode: m => { OPT.tmode = m | 0; save(); },
