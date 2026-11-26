@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.11.0)
+/* ASKIIES game fixes (game-fixes.js v1.12.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -32,6 +32,8 @@
  * 8. CLOUD SAVE · never silently overwrites better progress; one tab saves at a time (bug #24)
  *
  * 9. HUD · a radio message without a speaker no longer crashes the HUD (bug #27)
+ *
+ * 10. HUD · no STALL / departure / AOA warnings in near space where there is no air (bug #20)
  */
 (function () {
   'use strict';
@@ -413,6 +415,23 @@
     if (typeof f === 'function') g[n] = function () { try { if (typeof rcur !== 'undefined' && rcur) fixMsg(rcur); } catch (e) {} return f.apply(this, arguments); };   // eslint-disable-line no-undef
   }
 
+  // ---- 10. no STALL warning in near space (bug #20)
+  // The HUD says STALL (and the cockpit voice "Stall. Stall.") whenever the flight model's stall
+  // amount P.sf is up, even at 200 km with "AIR 0%" where there is no air to stall in. Above that,
+  // with almost no air left (P.rho < 3%), the HUD and the voice warnings now ignore stall, post-stall,
+  // departure and AOA limit. The flight model itself is untouched.
+  const quietAero = fn => function () {
+    let saved = null;
+    try {
+      if (typeof P !== 'undefined' && P && P.rho != null && P.rho < 0.03) {                            // eslint-disable-line no-undef
+        saved = [P.sf, P.psm, P.dp, P.ns]; P.sf = 0; P.psm = 0; P.dp = 0; P.ns = 0;                    // eslint-disable-line no-undef
+      }
+    } catch (e) {}
+    try { return fn.apply(this, arguments); }
+    finally { if (saved) { [P.sf, P.psm, P.dp, P.ns] = saved; } }                                       // eslint-disable-line no-undef
+  };
+  for (const n of ['flightHUD', 'warnTick']) if (typeof g[n] === 'function') g[n] = quietAero(g[n]);
+
   // ---- 8. the cloud save never silently overwrites better progress (bug #24)
   // The game uploads the local save every 20 s and when you leave, and at sign-in it only downloads the
   // cloud save if the cloud is newer than this browser's "last synced" time. Whatever this browser has
@@ -544,5 +563,5 @@
     bc.postMessage({ t: 'hello', id: TAB.id, born: TAB.born });
   } catch (e) {}
 
-  g.ASKIIES_FIXES = { version: '1.11.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress', '#22 a battle only ends on its own result', '#27 radio lines without a speaker no longer crash the HUD'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  g.ASKIIES_FIXES = { version: '1.12.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress', '#22 a battle only ends on its own result', '#27 radio lines without a speaker no longer crash the HUD', '#21 no squadron intro in any battle', '#23 Workshop jets built from their real design slot', '#20 no stall warnings in near space'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
