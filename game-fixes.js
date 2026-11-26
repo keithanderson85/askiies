@@ -1,4 +1,4 @@
-/* ASKIIES game fixes (game-fixes.js v1.10.0)
+/* ASKIIES game fixes (game-fixes.js v1.11.0)
  *
  * Small corrections to bugs in the upstream game (ASKIIES.html is never edited by hand).
  * Loaded after the game, before </body>. Each fix names the bug-board report it closes.
@@ -30,6 +30,8 @@
  * 7. PHONES · save and craft files load and download from the game's buttons (bug #19)
  *
  * 8. CLOUD SAVE · never silently overwrites better progress; one tab saves at a time (bug #24)
+ *
+ * 9. HUD · a radio message without a speaker no longer crashes the HUD (bug #27)
  */
 (function () {
   'use strict';
@@ -395,6 +397,22 @@
     };
   }
 
+  // ---- 9. a radio message without a speaker no longer crashes the HUD (bug #27)
+  // Some radio lines are queued as {w: a.nm} / {w, s} with no name, and radioHUD / cockpitUI call
+  // rcur.w.startsWith(...) every frame: "can't access property startsWith, rcur.w is undefined", and
+  // the game reported a failing HUD. Messages now always have a speaker and text.
+  const fixMsg = m => { if (m && typeof m === 'object') { if (typeof m.w !== 'string') m.w = m.w == null ? 'RADIO' : String(m.w); if (typeof m.s !== 'string') m.s = m.s == null ? '' : String(m.s); } return m; };
+  try {
+    if (typeof rq !== 'undefined' && Array.isArray(rq)) {                                               // eslint-disable-line no-undef
+      const _rp = rq.push;                                                                              // eslint-disable-line no-undef
+      rq.push = function () { for (const m of arguments) fixMsg(m); return _rp.apply(this, arguments); };   // eslint-disable-line no-undef
+    }
+  } catch (e) {}
+  for (const n of ['radioHUD', 'cockpitUI']) {
+    const f = g[n];
+    if (typeof f === 'function') g[n] = function () { try { if (typeof rcur !== 'undefined' && rcur) fixMsg(rcur); } catch (e) {} return f.apply(this, arguments); };   // eslint-disable-line no-undef
+  }
+
   // ---- 8. the cloud save never silently overwrites better progress (bug #24)
   // The game uploads the local save every 20 s and when you leave, and at sign-in it only downloads the
   // cloud save if the cloud is newer than this browser's "last synced" time. Whatever this browser has
@@ -526,5 +544,5 @@
     bc.postMessage({ t: 'hello', id: TAB.id, born: TAB.born });
   } catch (e) {}
 
-  g.ASKIIES_FIXES = { version: '1.10.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
+  g.ASKIIES_FIXES = { version: '1.11.0', tab: () => TAB, cloudHold: () => cHold, fxPlay, jb: () => Object.fromEntries(Object.entries(JB).map(([k, b]) => [k, { h: b.h, n: b.n, got: b.ch.filter(Boolean).length, built: !!b.mesh, worn: !!b.E }])), fixes: ['#6 battle jets are air targets (lock + damage)', '#11 one score and one ending per battle', '#14 no squadron cutscenes in online battles', '#13 designs keep their paint, camo and decals', '#12 everyone sees nukes and plasma blasts', '#9 other pilots wear their real Workshop jet', '#19 phones can load and download saves', '#24 cloud save never silently overwrites better progress', '#22 a battle only ends on its own result', '#27 radio lines without a speaker no longer crash the HUD'], caCtx: () => caCtx, endW: () => endW, look: () => G_(() => CD().look) };   // eslint-disable-line no-undef
 })();
