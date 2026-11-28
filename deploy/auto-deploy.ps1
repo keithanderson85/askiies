@@ -24,7 +24,6 @@ $LogFile = Join-Path $Dir 'deploy.log'
 $StateFile = Join-Path $Dir 'state.json'
 $TestPort = 5299
 Set-Location $Repo
-$OutputEncoding = [Text.UTF8Encoding]::new($false)   # text piped into docker exec
 
 function Write-Log([string]$msg) {
   $line = (Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $msg
@@ -50,7 +49,10 @@ function Send-Status($s, [string]$state, [string]$err) {
     live = $s.live; liveMsg = $s.liveMsg; deployed = $s.deployed; failed = $s.failed; error = $err
   }
   $json = $o | ConvertTo-Json -Compress
-  $json | docker exec -i askiies-mp sh -c 'cat > /data/deploy-status.json' 2>$null
+  # Written to a file and copied in: piping text into docker from Windows PowerShell adds a BOM.
+  $tmp = Join-Path $Dir 'deploy-status.json'
+  [IO.File]::WriteAllText($tmp, $json, [Text.UTF8Encoding]::new($false))
+  Invoke-Cmd "docker cp ""$tmp"" askiies-mp:/data/deploy-status.json" | Out-Null
 }
 function Test-Health([string]$container, [int]$seconds) {
   for ($i = 0; $i -lt $seconds; $i += 3) {
