@@ -1,0 +1,6 @@
+{
+  "name": "askiies-deploy",
+  "private": true,
+  "description": "Smoke test run by auto-deploy.ps1 before a new build goes live",
+  "dependencies": { "playwright-core": "1.49.1" }
+}

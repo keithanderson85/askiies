@@ -16,7 +16,7 @@ const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { WebSocketServer } = require('ws');
 
-const VERSION = '1.5.0';
+const VERSION = '1.6.0';
 const STARTED = Date.now();
 const PORT = +process.env.PORT || 8080;
 const DB_PATH = process.env.DB_PATH || '/data/askiies.db';
@@ -711,6 +711,11 @@ const fileSize = f => { try { return fs.statSync(f).size; } catch (e) { return 0
 const kickUser = (uid, why) => { for (const c of [...conns]) if (c.user.id === uid) try { c.ws.close(4001, why); } catch (e) {} };
 const tempPassword = () => { const w = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let s = ''; for (const b of crypto.randomBytes(10)) s += w[b % w.length]; return s.slice(0, 5) + '-' + s.slice(5); };
 
+// Written by deploy/auto-deploy.ps1 on the host (docker exec ... > /data/deploy-status.json) after each check.
+function deployStatus() {
+  try { return JSON.parse(fs.readFileSync(path.join(path.dirname(DB_PATH), 'deploy-status.json'), 'utf8')); } catch { return null; }
+}
+
 function adminOverview() {
   const now = Date.now();
   const lb = new Map(), meta = new Map(), saves = new Map(H.count.all().map(r => [r.uid, r.n]));
@@ -743,6 +748,7 @@ function adminOverview() {
       version: VERSION, started: STARTED, node: process.version, rss: process.memoryUsage().rss,
       dbBytes: fileSize(DB_PATH) + fileSize(DB_PATH + '-wal'), registration: 'open', signupsPerNetDay: SIGNUPS_PER_NET_DAY,
     },
+    deploy: deployStatus(),
     totals: {
       users: users.length, online: onlineSince.size, conns: conns.size, rooms: roomList.length,
       new1: users.filter(u => u.created > now - day).length, new7: users.filter(u => u.created > now - 7 * day).length,

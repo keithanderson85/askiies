@@ -430,7 +430,18 @@ function render() {
   $('srvKv').innerHTML = [
     ['Server version', 'v' + S.version], ['Node', S.node], ['Running since', when(S.started) + ' (' + dur(D.now - S.started) + ')'],
     ['Memory', bytes(S.rss)], ['Database', bytes(S.dbBytes)], ['Signed-in devices', n(T.sessions)],
+    ...deployRows(D.deploy),
   ].map(([k, v]) => `<b>${k}</b><span class="mono">${esc(v)}</span>`).join('');
+}
+
+// Auto-deploy from GitHub (deploy/auto-deploy.ps1 on the host)
+function deployRows(d) {
+  if (!d) return [['Auto-deploy', 'no report yet']];
+  const c = x => x ? String(x).slice(0, 7) : '?';
+  const r = [['Live code', c(d.live) + (d.liveMsg ? ' · ' + d.liveMsg : '') + (d.deployed ? ' · ' + when(d.deployed) : '')],
+    ['Last GitHub check', when(d.checked) + ' · ' + (d.state || '')]];
+  if (d.failed) r.push(['NOT deployed', c(d.failed) + ' · ' + (d.error || 'failed')]);
+  return r;
 }
 
 const COLS = [

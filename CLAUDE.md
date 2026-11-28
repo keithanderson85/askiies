@@ -34,6 +34,14 @@ docker exec askiies-mp bugs list all        # everything; statuses: open, progre
 - Bugs in our add-ons (`mp-client.js`, `plane-engine.js`, `terrain-engine.js`, `combat-alerts.js`,
   `hangar-menu.js`, `mp-server/`): fix them in place and bump that file's version.
 
+## Deploying
+
+Other people push to GitHub now. Whatever lands on `main` is deployed automatically within ~5 minutes by
+`deploy/auto-deploy.ps1` (Windows task "ASKIIES auto-deploy"), after `deploy/smoke-test.js` passes on a
+test container (port 5299). See `deploy/README.md`. So: pushing to `main` = going live. Pull before you
+start work, and if you change what the game exposes (globals, add-on `window.ASKIIES_*` names, menu
+pages), update the smoke test too.
+
 ## Live server
 
 Real players use the live server. Test with throwaway pilots whose callsign starts with `ZZCA` and delete
